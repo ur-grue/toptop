@@ -1,0 +1,472 @@
+//! Application state and input handling — the controller tying metrics to UI.
+
+use std::time::{Duration, Instant};
+
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
+use sysinfo::Signal;
+
+use crate::config::Config;
+use crate::metrics::{Collector, ProcInfo};
+use crate::theme::{Theme, THEMES};
+
+/// Process table sort columns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortField {
+    Cpu,
+    Mem,
+    Pid,
+    Name,
+    User,
+    Time,
+}
+
+impl SortField {
+    pub fn label(self) -> &'static str {
+        match self {
+            SortField::Cpu => "CPU%",
+            SortField::Mem => "MEM%",
+            SortField::Pid => "PID",
+            SortField::Name => "NAME",
+            SortField::User => "USER",
+            SortField::Time => "TIME",
+        }
+    }
+
+    /// Cycle to the next sort field.
+    pub fn next(self) -> Self {
+        match self {
+            SortField::Cpu => SortField::Mem,
+            SortField::Mem => SortField::Pid,
+            SortField::Pid => SortField::Name,
+            SortField::Name => SortField::User,
+            SortField::User => SortField::Time,
+            SortField::Time => SortField::Cpu,
+        }
+    }
+}
+
+/// A pending destructive action awaiting confirmation.
+#[derive(Clone)]
+pub struct PendingKill {
+    pub pid: u32,
+    pub name: String,
+    pub signal: Signal,
+}
+
+/// The whole runtime state.
+pub struct App {
+    pub collector: Collector,
+    pub theme_idx: usize,
+    pub tick: Duration,
+    pub should_quit: bool,
+    pub paused: bool,
+    pub show_help: bool,
+    pub tree: bool,
+    pub per_core: bool,
+
+    pub sort: SortField,
+    pub sort_desc: bool,
+    pub filter: String,
+    pub filter_mode: bool,
+
+    /// The currently displayed, sorted/filtered/tree-ordered process rows.
+    pub proc_view: Vec<ProcInfo>,
+    pub selected_pid: Option<u32>,
+    pub proc_offset: usize,
+    /// Inner area of the process table, captured at render time for mouse hits.
+    pub proc_area: Rect,
+    /// Visible row capacity of the process table, captured at render time.
+    pub proc_rows: usize,
+
+    pub pending_kill: Option<PendingKill>,
+    pub status: Option<(String, Instant)>,
+}
+
+impl App {
+    pub fn new(cfg: &Config) -> Self {
+        let history_len = 256;
+        let collector = Collector::new(history_len);
+        let mut app = Self {
+            collector,
+            theme_idx: cfg.theme_idx.min(THEMES.len() - 1),
+            tick: Duration::from_millis(cfg.tick_ms),
+            should_quit: false,
+            paused: false,
+            show_help: false,
+            tree: cfg.tree,
+            per_core: cfg.per_core,
+            sort: SortField::Cpu,
+            sort_desc: true,
+            filter: String::new(),
+            filter_mode: false,
+            proc_view: Vec::new(),
+            selected_pid: None,
+            proc_offset: 0,
+            proc_area: Rect::default(),
+            proc_rows: 0,
+            pending_kill: None,
+            status: None,
+        };
+        app.rebuild_proc_view();
+        if app.selected_pid.is_none() {
+            app.selected_pid = app.proc_view.first().map(|p| p.pid);
+        }
+        app
+    }
+
+    pub fn theme(&self) -> &'static Theme {
+        &THEMES[self.theme_idx]
+    }
+
+    /// Snapshot of the config for persistence on exit.
+    pub fn config(&self) -> Config {
+        Config {
+            tick_ms: self.tick.as_millis() as u64,
+            theme_idx: self.theme_idx,
+            tree: self.tree,
+            per_core: self.per_core,
+        }
+    }
+
+    /// Pull fresh metrics (unless paused) and recompute the process view.
+    pub fn on_tick(&mut self) {
+        if !self.paused {
+            self.collector.refresh();
+        }
+        self.rebuild_proc_view();
+        self.expire_status();
+    }
+
+    fn expire_status(&mut self) {
+        if let Some((_, when)) = &self.status {
+            if when.elapsed() > Duration::from_secs(4) {
+                self.status = None;
+            }
+        }
+    }
+
+    fn set_status(&mut self, msg: impl Into<String>) {
+        self.status = Some((msg.into(), Instant::now()));
+    }
+
+    /// Rebuild [`Self::proc_view`] from the collector applying filter, tree, sort.
+    pub fn rebuild_proc_view(&mut self) {
+        let mut rows: Vec<ProcInfo> = self.collector.procs.clone();
+
+        if !self.filter.is_empty() {
+            let needle = self.filter.to_ascii_lowercase();
+            rows.retain(|p| {
+                p.name.to_ascii_lowercase().contains(&needle)
+                    || p.cmd.to_ascii_lowercase().contains(&needle)
+                    || p.user.to_ascii_lowercase().contains(&needle)
+                    || p.pid.to_string().contains(&needle)
+            });
+        }
+
+        if self.tree && self.filter.is_empty() {
+            rows = self.build_tree(rows);
+        } else {
+            self.sort_rows(&mut rows);
+        }
+
+        self.proc_view = rows;
+
+        // Keep selection valid.
+        if let Some(pid) = self.selected_pid {
+            if !self.proc_view.iter().any(|p| p.pid == pid) {
+                self.selected_pid = self.proc_view.first().map(|p| p.pid);
+            }
+        } else {
+            self.selected_pid = self.proc_view.first().map(|p| p.pid);
+        }
+    }
+
+    fn sort_rows(&self, rows: &mut [ProcInfo]) {
+        rows.sort_by(|a, b| {
+            let ord = match self.sort {
+                SortField::Cpu => a.cpu.partial_cmp(&b.cpu).unwrap_or(std::cmp::Ordering::Equal),
+                SortField::Mem => a
+                    .mem_bytes
+                    .cmp(&b.mem_bytes),
+                SortField::Pid => a.pid.cmp(&b.pid),
+                SortField::Name => a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()),
+                SortField::User => a.user.to_ascii_lowercase().cmp(&b.user.to_ascii_lowercase()),
+                SortField::Time => a.run_time.cmp(&b.run_time),
+            };
+            if self.sort_desc {
+                ord.reverse()
+            } else {
+                ord
+            }
+        });
+    }
+
+    /// Build a depth-annotated tree ordering (parents before children).
+    fn build_tree(&self, rows: Vec<ProcInfo>) -> Vec<ProcInfo> {
+        use std::collections::HashMap;
+        let present: std::collections::HashSet<u32> = rows.iter().map(|p| p.pid).collect();
+        let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
+        let mut roots: Vec<usize> = Vec::new();
+        for (idx, p) in rows.iter().enumerate() {
+            match p.ppid {
+                Some(ppid) if present.contains(&ppid) && ppid != p.pid => {
+                    children.entry(ppid).or_default().push(idx);
+                }
+                _ => roots.push(idx),
+            }
+        }
+
+        // Sort siblings (and roots) by the active sort key.
+        let sort_idx = |list: &mut Vec<usize>| {
+            list.sort_by(|&a, &b| {
+                let (pa, pb) = (&rows[a], &rows[b]);
+                let ord = match self.sort {
+                    SortField::Cpu => pa.cpu.partial_cmp(&pb.cpu).unwrap_or(std::cmp::Ordering::Equal),
+                    SortField::Mem => pa.mem_bytes.cmp(&pb.mem_bytes),
+                    SortField::Pid => pa.pid.cmp(&pb.pid),
+                    SortField::Name => pa.name.to_ascii_lowercase().cmp(&pb.name.to_ascii_lowercase()),
+                    SortField::User => pa.user.to_ascii_lowercase().cmp(&pb.user.to_ascii_lowercase()),
+                    SortField::Time => pa.run_time.cmp(&pb.run_time),
+                };
+                if self.sort_desc { ord.reverse() } else { ord }
+            });
+        };
+        sort_idx(&mut roots);
+        for v in children.values_mut() {
+            sort_idx(v);
+        }
+
+        let mut out = Vec::with_capacity(rows.len());
+        // Iterative DFS to avoid recursion limits on deep trees.
+        let mut stack: Vec<(usize, usize)> = roots.iter().rev().map(|&i| (i, 0usize)).collect();
+        let mut visited = std::collections::HashSet::new();
+        while let Some((idx, depth)) = stack.pop() {
+            if !visited.insert(idx) {
+                continue;
+            }
+            let mut row = rows[idx].clone();
+            row.depth = depth;
+            out.push(row);
+            if let Some(kids) = children.get(&rows[idx].pid) {
+                for &kid in kids.iter().rev() {
+                    stack.push((kid, depth + 1));
+                }
+            }
+        }
+        // Append any orphans not reached (cycles), so nothing is silently dropped.
+        for (idx, p) in rows.iter().enumerate() {
+            if !visited.contains(&idx) {
+                out.push(p.clone());
+            }
+        }
+        out
+    }
+
+    fn selected_index(&self) -> Option<usize> {
+        let pid = self.selected_pid?;
+        self.proc_view.iter().position(|p| p.pid == pid)
+    }
+
+    fn move_selection(&mut self, delta: isize) {
+        if self.proc_view.is_empty() {
+            return;
+        }
+        let cur = self.selected_index().unwrap_or(0) as isize;
+        let max = self.proc_view.len() as isize - 1;
+        let next = (cur + delta).clamp(0, max) as usize;
+        self.selected_pid = Some(self.proc_view[next].pid);
+    }
+
+    fn select_first(&mut self) {
+        self.selected_pid = self.proc_view.first().map(|p| p.pid);
+    }
+
+    fn select_last(&mut self) {
+        self.selected_pid = self.proc_view.last().map(|p| p.pid);
+    }
+
+    fn cycle_theme(&mut self, forward: bool) {
+        let n = THEMES.len();
+        self.theme_idx = if forward {
+            (self.theme_idx + 1) % n
+        } else {
+            (self.theme_idx + n - 1) % n
+        };
+        self.set_status(format!("Theme: {}", self.theme().name));
+    }
+
+    fn adjust_tick(&mut self, faster: bool) {
+        let ms = self.tick.as_millis() as u64;
+        let new = if faster {
+            ms.saturating_sub(250).max(250)
+        } else {
+            (ms + 250).min(10_000)
+        };
+        self.tick = Duration::from_millis(new);
+        self.set_status(format!("Refresh: {} ms", new));
+    }
+
+    fn request_kill(&mut self, signal: Signal) {
+        let Some(idx) = self.selected_index() else {
+            return;
+        };
+        let p = &self.proc_view[idx];
+        self.pending_kill = Some(PendingKill {
+            pid: p.pid,
+            name: p.name.clone(),
+            signal,
+        });
+    }
+
+    fn confirm_kill(&mut self) {
+        if let Some(pk) = self.pending_kill.take() {
+            let ok = self.collector.signal_process(pk.pid, pk.signal);
+            let sig = signal_name(pk.signal);
+            if ok {
+                self.set_status(format!("Sent {} to {} ({})", sig, pk.name, pk.pid));
+            } else {
+                self.set_status(format!("Failed to signal {} ({})", pk.name, pk.pid));
+            }
+        }
+    }
+
+    // ── Input ────────────────────────────────────────────────────────────────
+
+    /// Handle a key event. Returns immediately for modal/filter states.
+    pub fn on_key(&mut self, key: KeyEvent) {
+        // Confirmation modal takes precedence.
+        if self.pending_kill.is_some() {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.confirm_kill(),
+                _ => self.pending_kill = None,
+            }
+            return;
+        }
+
+        // Filter text-entry mode.
+        if self.filter_mode {
+            match key.code {
+                KeyCode::Esc => {
+                    self.filter.clear();
+                    self.filter_mode = false;
+                    self.rebuild_proc_view();
+                }
+                KeyCode::Enter => {
+                    self.filter_mode = false;
+                }
+                KeyCode::Backspace => {
+                    self.filter.pop();
+                    self.rebuild_proc_view();
+                }
+                KeyCode::Char(c) => {
+                    self.filter.push(c);
+                    self.rebuild_proc_view();
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // Help overlay: any key closes it.
+        if self.show_help {
+            self.show_help = false;
+            return;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.should_quit = true;
+            return;
+        }
+
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                // Esc clears an applied filter first; only quits when none set.
+                if !self.filter.is_empty() {
+                    self.filter.clear();
+                    self.rebuild_proc_view();
+                } else {
+                    self.should_quit = true;
+                }
+            }
+            KeyCode::Char('?') | KeyCode::F(1) => self.show_help = true,
+            KeyCode::Char(' ') => {
+                self.paused = !self.paused;
+                self.set_status(if self.paused { "Paused" } else { "Resumed" });
+            }
+            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
+            KeyCode::PageUp => self.move_selection(-(self.proc_rows.max(1) as isize)),
+            KeyCode::PageDown => self.move_selection(self.proc_rows.max(1) as isize),
+            KeyCode::Home | KeyCode::Char('g') => self.select_first(),
+            KeyCode::End | KeyCode::Char('G') => self.select_last(),
+            KeyCode::Char('s') => {
+                self.sort = self.sort.next();
+                self.set_status(format!("Sort: {}", self.sort.label()));
+                self.rebuild_proc_view();
+            }
+            KeyCode::Char('i') => {
+                self.sort_desc = !self.sort_desc;
+                self.rebuild_proc_view();
+            }
+            KeyCode::Char('t') => {
+                self.tree = !self.tree;
+                self.set_status(if self.tree { "Tree view" } else { "Flat view" });
+                self.rebuild_proc_view();
+            }
+            KeyCode::Char('e') => {
+                self.per_core = !self.per_core;
+            }
+            KeyCode::Char('p') => self.cycle_theme(true),
+            KeyCode::Char('P') => self.cycle_theme(false),
+            KeyCode::Char('+') | KeyCode::Char('=') => self.adjust_tick(true),
+            KeyCode::Char('-') | KeyCode::Char('_') => self.adjust_tick(false),
+            KeyCode::Char('/') => {
+                self.filter_mode = true;
+                self.set_status("Filter: type to match, Enter to apply, Esc to clear");
+            }
+            KeyCode::Char('K') | KeyCode::F(9) | KeyCode::Delete => self.request_kill(Signal::Term),
+            KeyCode::Char('x') => self.request_kill(Signal::Kill),
+            _ => {}
+        }
+    }
+
+    /// Handle a mouse event over the process table.
+    pub fn on_mouse(&mut self, ev: MouseEvent) {
+        if self.show_help || self.pending_kill.is_some() {
+            return;
+        }
+        match ev.kind {
+            MouseEventKind::ScrollUp => self.move_selection(-3),
+            MouseEventKind::ScrollDown => self.move_selection(3),
+            MouseEventKind::Down(_) => {
+                let area = self.proc_area;
+                if ev.column >= area.x
+                    && ev.column < area.x + area.width
+                    && ev.row >= area.y
+                    && ev.row < area.y + area.height
+                {
+                    let rel = (ev.row - area.y) as usize;
+                    let idx = self.proc_offset + rel;
+                    if idx < self.proc_view.len() {
+                        self.selected_pid = Some(self.proc_view[idx].pid);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn signal_name(sig: Signal) -> &'static str {
+    match sig {
+        Signal::Term => "SIGTERM",
+        Signal::Kill => "SIGKILL",
+        Signal::Interrupt => "SIGINT",
+        Signal::Hangup => "SIGHUP",
+        Signal::Stop => "SIGSTOP",
+        Signal::Continue => "SIGCONT",
+        _ => "signal",
+    }
+}
