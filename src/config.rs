@@ -7,6 +7,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::app::LayoutPreset;
 use crate::theme;
 
 /// User-tunable settings.
@@ -20,6 +21,8 @@ pub struct Config {
     pub tree: bool,
     /// Show per-core CPU meters by default.
     pub per_core: bool,
+    /// Body layout preset.
+    pub layout: LayoutPreset,
 }
 
 impl Default for Config {
@@ -29,6 +32,7 @@ impl Default for Config {
             theme_idx: 0,
             tree: false,
             per_core: true,
+            layout: LayoutPreset::Full,
         }
     }
 }
@@ -74,6 +78,7 @@ impl Config {
                 }
                 "tree" => cfg.tree = parse_bool(value).unwrap_or(cfg.tree),
                 "per_core" => cfg.per_core = parse_bool(value).unwrap_or(cfg.per_core),
+                "layout" => cfg.layout = LayoutPreset::from_name(value).unwrap_or(cfg.layout),
                 _ => {}
             }
         }
@@ -97,8 +102,13 @@ impl Config {
              tick_ms = {}\n\
              theme = {}\n\
              tree = {}\n\
-             per_core = {}\n",
-            self.tick_ms, theme_name, self.tree, self.per_core
+             per_core = {}\n\
+             layout = {}\n",
+            self.tick_ms,
+            theme_name,
+            self.tree,
+            self.per_core,
+            self.layout.label()
         );
         let _ = fs::write(path, body);
     }

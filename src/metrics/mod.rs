@@ -12,9 +12,11 @@ use sysinfo::{
 };
 
 pub mod gpu;
+pub mod netconn;
 
 use crate::history::History;
 use gpu::{Gpu, GpuMonitor};
+pub use netconn::Connection;
 
 /// Static-ish information about the host, captured once at startup.
 #[derive(Clone, Debug, Default)]
@@ -90,6 +92,8 @@ pub struct ProcInfo {
     pub virt: u64,
     pub disk_read: u64,
     pub disk_written: u64,
+    pub io_read_rate: f64,
+    pub io_write_rate: f64,
     pub start_time: u64,
     pub run_time: u64,
     pub status: char,
@@ -127,6 +131,9 @@ pub struct Collector {
     refresh_kind: RefreshKind,
     proc_refresh: ProcessRefreshKind,
     gpu_monitor: GpuMonitor,
+    /// Per-PID cumulative (read, written) bytes from the previous tick, used to
+    /// derive per-process I/O rates.
+    prev_proc_io: std::collections::HashMap<u32, (u64, u64)>,
     last_instant: Option<Instant>,
     history_len: usize,
 
@@ -204,6 +211,7 @@ impl Collector {
             refresh_kind,
             proc_refresh,
             gpu_monitor: GpuMonitor::new(),
+            prev_proc_io: std::collections::HashMap::new(),
             last_instant: None,
             history_len,
             host,
@@ -254,7 +262,7 @@ impl Collector {
         self.refresh_mem();
         self.refresh_net(elapsed);
         self.refresh_disks(elapsed);
-        self.refresh_procs();
+        self.refresh_procs(elapsed);
         self.refresh_sensors();
         self.gpus = self.gpu_monitor.snapshot();
         self.battery = read_battery();
@@ -373,9 +381,11 @@ impl Collector {
         self.disk_write_history.push(self.disk_write_rate);
     }
 
-    fn refresh_procs(&mut self) {
+    fn refresh_procs(&mut self, elapsed: f64) {
         let total_mem = self.sys.total_memory().max(1);
         let mut procs = Vec::with_capacity(self.sys.processes().len());
+        let mut io_now: std::collections::HashMap<u32, (u64, u64)> =
+            std::collections::HashMap::with_capacity(self.sys.processes().len());
         for (pid, proc_) in self.sys.processes() {
             let name = proc_.name().to_string_lossy().to_string();
             let cmd = {
@@ -404,8 +414,20 @@ impl Collector {
                 .unwrap_or_else(|| "—".into());
             let du = proc_.disk_usage();
             let status = proc_.status();
+            let pid_u32 = pid.as_u32();
+            io_now.insert(pid_u32, (du.total_read_bytes, du.total_written_bytes));
+            let (io_read_rate, io_write_rate) = self
+                .prev_proc_io
+                .get(&pid_u32)
+                .map(|&(pr, pw)| {
+                    (
+                        du.total_read_bytes.saturating_sub(pr) as f64 / elapsed,
+                        du.total_written_bytes.saturating_sub(pw) as f64 / elapsed,
+                    )
+                })
+                .unwrap_or((0.0, 0.0));
             procs.push(ProcInfo {
-                pid: pid.as_u32(),
+                pid: pid_u32,
                 ppid: proc_.parent().map(|p| p.as_u32()),
                 name,
                 cmd,
@@ -416,6 +438,8 @@ impl Collector {
                 virt: proc_.virtual_memory(),
                 disk_read: du.total_read_bytes,
                 disk_written: du.total_written_bytes,
+                io_read_rate,
+                io_write_rate,
                 start_time: proc_.start_time(),
                 run_time: proc_.run_time(),
                 status: status_char(status),
@@ -433,6 +457,7 @@ impl Collector {
             });
         }
         self.procs = procs;
+        self.prev_proc_io = io_now;
     }
 
     fn refresh_sensors(&mut self) {
@@ -457,6 +482,12 @@ impl Collector {
     /// Number of running (non-sleeping) processes, for the header summary.
     pub fn running_procs(&self) -> usize {
         self.procs.iter().filter(|p| p.status == 'R').count()
+    }
+
+    /// Enumerate current network connections (TCP/UDP) joined to processes.
+    /// Computed on demand — only call this while the connections view is open.
+    pub fn connections(&self) -> Vec<Connection> {
+        netconn::collect()
     }
 
     /// Send a signal to a process. Returns whether the signal was delivered.

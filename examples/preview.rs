@@ -22,6 +22,10 @@ fn main() {
     app.on_tick();
     app.on_tick();
     match overlay.as_str() {
+        "conn" => {
+            app.show_conn = true;
+            app.connections = app.collector.connections();
+        }
         "detail" => app.show_detail = true,
         "signal" => {
             use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

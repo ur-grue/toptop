@@ -36,6 +36,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     render_body(f, chunks[1], app);
     render_footer(f, chunks[2], app);
 
+    if app.show_conn {
+        render_connections(f, area, app);
+    }
     if app.show_detail {
         render_detail(f, area, app);
     }
@@ -147,6 +150,14 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 // ── Body layout ──────────────────────────────────────────────────────────────
 
 fn render_body(f: &mut Frame, area: Rect, app: &mut App) {
+    use crate::app::LayoutPreset;
+
+    // The Process preset hides the whole top section.
+    if app.layout == LayoutPreset::Process {
+        render_procs(f, area, app);
+        return;
+    }
+
     let top_h: u16 = if area.height >= 22 {
         14
     } else if area.height >= 15 {
@@ -157,7 +168,10 @@ fn render_body(f: &mut Frame, area: Rect, app: &mut App) {
 
     if top_h > 0 && area.width >= 60 {
         let rows = Layout::vertical([Constraint::Length(top_h), Constraint::Min(3)]).split(area);
-        render_top(f, rows[0], app);
+        match app.layout {
+            LayoutPreset::Cpu => render_cpu(f, rows[0], app),
+            _ => render_top(f, rows[0], app),
+        }
         render_procs(f, rows[1], app);
     } else {
         render_procs(f, area, app);
@@ -565,9 +579,18 @@ fn render_sensors(f: &mut Frame, area: Rect, app: &App) {
             format!("gpu{:<7}", i),
             Style::default().fg(theme.accent2.color()),
         )];
-        spans.extend(graph::meter_spans(u, mw, theme));
+        spans.extend(graph::meter_spans(
+            if g.has_util { u } else { 0.0 },
+            mw,
+            theme,
+        ));
+        let util_txt = if g.has_util {
+            format!("{:>3.0}%", u)
+        } else {
+            "  --".to_string()
+        };
         spans.push(Span::styled(
-            format!(" {:>3.0}% {:>3.0}°C", u, g.temp),
+            format!(" {} {:>3.0}°C", util_txt, g.temp),
             Style::default().fg(theme.grad(u / 100.0)),
         ));
         lines.push(Line::from(spans));
@@ -656,6 +679,7 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         Cell::from("CPU%"),
         Cell::from("MEM%"),
         Cell::from("MEM"),
+        Cell::from("DISK"),
         Cell::from("TIME"),
         Cell::from("S"),
         Cell::from("COMMAND"),
@@ -688,6 +712,17 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
                 Style::default().fg(theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0))),
             )),
             Cell::from(short_bytes(p.mem_bytes)),
+            Cell::from({
+                let io = p.io_read_rate + p.io_write_rate;
+                if io >= 1.0 {
+                    Span::styled(
+                        format!("{}/s", short_bytes(io as u64)),
+                        Style::default().fg(theme.disk_write.color()),
+                    )
+                } else {
+                    Span::styled("·", dim(theme))
+                }
+            }),
             Cell::from(compact_duration(p.run_time)),
             Cell::from(p.status.to_string()),
             Cell::from(cmd),
@@ -711,6 +746,7 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(5),
         Constraint::Length(5),
         Constraint::Length(7),
+        Constraint::Length(8),
         Constraint::Length(7),
         Constraint::Length(1),
         Constraint::Min(10),
@@ -765,11 +801,12 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     for (k, d) in [
         ("?", "help"),
         ("Enter", "detail"),
+        ("n", "net"),
         ("s", "sort"),
         ("t", "tree"),
         ("/", "filter"),
         ("K", "signal"),
-        ("p", "theme"),
+        ("L", "layout"),
         ("q", "quit"),
     ] {
         spans.extend(hint(k, d, theme));
@@ -860,6 +897,15 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             ),
             theme.fg.color(),
         ),
+        row(
+            "Disk rate",
+            format!(
+                "R {}  W {}",
+                human_rate(p.io_read_rate),
+                human_rate(p.io_write_rate)
+            ),
+            theme.disk_write.color(),
+        ),
         row("Started", started, theme.fg.color()),
         row("Run time", human_duration(p.run_time), theme.fg.color()),
         row(
@@ -916,8 +962,108 @@ fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app:
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
+fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {
+    let theme = app.theme();
+    let rect = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+    f.render_widget(Clear, rect);
+    let (tcp, udp) = app.connections.iter().fold((0usize, 0usize), |(t, u), c| {
+        if c.proto.starts_with("tcp") {
+            (t + 1, u)
+        } else {
+            (t, u + 1)
+        }
+    });
+    let block = panel(
+        &format!(
+            "network connections · {} ({} tcp · {} udp) · Esc/n to close",
+            app.connections.len(),
+            tcp,
+            udp
+        ),
+        theme,
+    );
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    if inner.width == 0 || inner.height < 2 {
+        app.conn_rows = 0;
+        return;
+    }
+
+    let rows_cap = (inner.height - 1) as usize;
+    app.conn_rows = rows_cap;
+    let max_offset = app.connections.len().saturating_sub(rows_cap);
+    app.conn_offset = app.conn_offset.min(max_offset);
+
+    let header = Row::new(vec![
+        Cell::from("PROTO"),
+        Cell::from("LOCAL ADDRESS"),
+        Cell::from("REMOTE ADDRESS"),
+        Cell::from("STATE"),
+        Cell::from("PID"),
+        Cell::from("PROCESS"),
+    ])
+    .style(
+        Style::default()
+            .fg(theme.accent.color())
+            .add_modifier(Modifier::BOLD),
+    );
+
+    let state_color = |s: &str| match s {
+        "LISTEN" => theme.accent2.color(),
+        "ESTABLISHED" => theme.grad(0.0),
+        "SYN_SENT" | "SYN_RECV" => theme.grad(0.5),
+        "—" => theme.dim.color(),
+        _ => theme.dim.color(),
+    };
+
+    let end = (app.conn_offset + rows_cap).min(app.connections.len());
+    let mut rows: Vec<Row> = Vec::with_capacity(rows_cap);
+    for c in &app.connections[app.conn_offset..end] {
+        rows.push(
+            Row::new(vec![
+                Cell::from(c.proto),
+                Cell::from(truncate(&c.local, 30)),
+                Cell::from(truncate(&c.remote, 30)),
+                Cell::from(Span::styled(
+                    c.state,
+                    Style::default().fg(state_color(c.state)),
+                )),
+                Cell::from(
+                    c.pid
+                        .map(|p| p.to_string())
+                        .unwrap_or_else(|| "—".to_string()),
+                ),
+                Cell::from(truncate(&c.process, 24)),
+            ])
+            .style(Style::default().fg(theme.fg.color())),
+        );
+    }
+    if rows.is_empty() {
+        rows.push(Row::new(vec![Cell::from(Span::styled(
+            "no connections (or insufficient permissions to map sockets)",
+            dim(theme),
+        ))]));
+    }
+
+    let widths = [
+        Constraint::Length(5),
+        Constraint::Length(32),
+        Constraint::Length(32),
+        Constraint::Length(12),
+        Constraint::Length(7),
+        Constraint::Min(10),
+    ];
+    let table = Table::new(rows, widths).header(header).column_spacing(1);
+    f.render_widget(table, inner);
+}
+
 fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
-    let rect = centered(area, 56, 24);
+    let rect = centered(area, 56, 26);
     f.render_widget(Clear, rect);
     let block = panel("help · toptop", theme);
     let inner = block.inner(rect);
@@ -942,6 +1088,8 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("click header", "sort by column"),
         ("t", "toggle process tree"),
         ("e", "toggle per-core CPU meters"),
+        ("n", "network connections"),
+        ("L", "cycle layout preset"),
         ("/", "filter processes"),
         ("K / F9", "signal menu"),
         ("Del", "terminate (SIGTERM)"),

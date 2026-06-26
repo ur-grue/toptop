@@ -67,8 +67,42 @@ fn overlays_render() {
     render_at(&mut app, 100, 30);
 
     // Cancel the confirmation.
-    app.on_key(key(KeyCode::Char('n')));
+    app.on_key(key(KeyCode::Esc));
     assert!(app.pending_kill.is_none());
+
+    // Network connections view: open, scroll, render, close.
+    app.on_key(key(KeyCode::Char('n')));
+    assert!(app.show_conn);
+    render_at(&mut app, 120, 40);
+    app.on_key(key(KeyCode::Down));
+    app.on_key(key(KeyCode::PageDown));
+    app.on_key(key(KeyCode::Char('G')));
+    render_at(&mut app, 120, 40);
+    app.on_key(key(KeyCode::Esc));
+    assert!(!app.show_conn);
+}
+
+#[test]
+fn layout_presets_render() {
+    let mut app = App::new(&Config::default());
+    // Cycle through every layout preset and render the full body each time.
+    for _ in 0..4 {
+        app.on_key(key(KeyCode::Char('L')));
+        render_at(&mut app, 120, 40);
+        render_at(&mut app, 70, 18);
+    }
+}
+
+#[test]
+fn connections_collect_without_panic() {
+    // Exercises the real /proc parsing + inode→pid mapping on this host.
+    let app = App::new(&Config::default());
+    let conns = app.collector.connections();
+    // Every returned row must have non-empty protocol/address strings.
+    for c in conns.iter().take(50) {
+        assert!(!c.proto.is_empty());
+        assert!(!c.local.is_empty());
+    }
 }
 
 #[test]
@@ -78,8 +112,9 @@ fn header_sort_mapping() {
     assert_eq!(header_sort_at(10), Some(SortField::User));
     assert_eq!(header_sort_at(20), Some(SortField::Cpu));
     assert_eq!(header_sort_at(26), Some(SortField::Mem));
-    assert_eq!(header_sort_at(40), Some(SortField::Time));
-    assert_eq!(header_sort_at(46), None);
+    assert_eq!(header_sort_at(40), Some(SortField::Io));
+    assert_eq!(header_sort_at(50), Some(SortField::Time));
+    assert_eq!(header_sort_at(55), None);
     assert_eq!(header_sort_at(60), Some(SortField::Name));
 }
 

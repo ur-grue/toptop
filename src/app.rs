@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use sysinfo::Signal;
 
 use crate::config::Config;
-use crate::metrics::{Collector, ProcInfo};
+use crate::metrics::{Collector, Connection, ProcInfo};
 use crate::theme::{Theme, THEMES};
 
 /// Process table sort columns.
@@ -19,6 +19,7 @@ pub enum SortField {
     Name,
     User,
     Time,
+    Io,
 }
 
 impl SortField {
@@ -30,6 +31,7 @@ impl SortField {
             SortField::Name => "NAME",
             SortField::User => "USER",
             SortField::Time => "TIME",
+            SortField::Io => "DISK",
         }
     }
 
@@ -41,7 +43,51 @@ impl SortField {
             SortField::Pid => SortField::Name,
             SortField::Name => SortField::User,
             SortField::User => SortField::Time,
-            SortField::Time => SortField::Cpu,
+            SortField::Time => SortField::Io,
+            SortField::Io => SortField::Cpu,
+        }
+    }
+}
+
+/// Sort key for the combined per-process I/O rate.
+fn io_rate(p: &ProcInfo) -> f64 {
+    p.io_read_rate + p.io_write_rate
+}
+
+/// Top-section layout presets, cycled with `L` and persisted to config.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutPreset {
+    /// CPU · mem/sensors · net/disk, then the process table (the default).
+    Full,
+    /// A single full-width CPU panel on top, then the process table.
+    Cpu,
+    /// No top panels — the process table fills the whole body.
+    Process,
+}
+
+impl LayoutPreset {
+    pub fn label(self) -> &'static str {
+        match self {
+            LayoutPreset::Full => "full",
+            LayoutPreset::Cpu => "cpu",
+            LayoutPreset::Process => "process",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            LayoutPreset::Full => LayoutPreset::Cpu,
+            LayoutPreset::Cpu => LayoutPreset::Process,
+            LayoutPreset::Process => LayoutPreset::Full,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "full" => Some(LayoutPreset::Full),
+            "cpu" => Some(LayoutPreset::Cpu),
+            "process" | "proc" => Some(LayoutPreset::Process),
+            _ => None,
         }
     }
 }
@@ -77,6 +123,7 @@ pub struct App {
     pub show_help: bool,
     pub tree: bool,
     pub per_core: bool,
+    pub layout: LayoutPreset,
 
     pub sort: SortField,
     pub sort_desc: bool,
@@ -97,6 +144,14 @@ pub struct App {
     pub signal_menu: Option<usize>,
     /// Whether the process detail overlay is shown for the selection.
     pub show_detail: bool,
+    /// Whether the network-connections view is shown.
+    pub show_conn: bool,
+    /// Latest connection snapshot (refreshed while the view is open).
+    pub connections: Vec<Connection>,
+    /// Scroll offset into the connections list.
+    pub conn_offset: usize,
+    /// Visible row capacity of the connections view, captured at render time.
+    pub conn_rows: usize,
     pub status: Option<(String, Instant)>,
 }
 
@@ -113,6 +168,7 @@ impl App {
             show_help: false,
             tree: cfg.tree,
             per_core: cfg.per_core,
+            layout: cfg.layout,
             sort: SortField::Cpu,
             sort_desc: true,
             filter: String::new(),
@@ -125,6 +181,10 @@ impl App {
             pending_kill: None,
             signal_menu: None,
             show_detail: false,
+            show_conn: false,
+            connections: Vec::new(),
+            conn_offset: 0,
+            conn_rows: 0,
             status: None,
         };
         app.rebuild_proc_view();
@@ -145,6 +205,7 @@ impl App {
             theme_idx: self.theme_idx,
             tree: self.tree,
             per_core: self.per_core,
+            layout: self.layout,
         }
     }
 
@@ -154,7 +215,23 @@ impl App {
             self.collector.refresh();
         }
         self.rebuild_proc_view();
+        if self.show_conn {
+            self.refresh_connections();
+        }
         self.expire_status();
+    }
+
+    /// Re-snapshot network connections and clamp the scroll offset.
+    fn refresh_connections(&mut self) {
+        self.connections = self.collector.connections();
+        let max = self.connections.len().saturating_sub(1);
+        self.conn_offset = self.conn_offset.min(max);
+    }
+
+    fn scroll_conn(&mut self, delta: isize) {
+        let max = self.connections.len().saturating_sub(1) as isize;
+        let next = (self.conn_offset as isize + delta).clamp(0, max.max(0));
+        self.conn_offset = next as usize;
     }
 
     fn expire_status(&mut self) {
@@ -219,6 +296,9 @@ impl App {
                     .to_ascii_lowercase()
                     .cmp(&b.user.to_ascii_lowercase()),
                 SortField::Time => a.run_time.cmp(&b.run_time),
+                SortField::Io => io_rate(a)
+                    .partial_cmp(&io_rate(b))
+                    .unwrap_or(std::cmp::Ordering::Equal),
             };
             if self.sort_desc {
                 ord.reverse()
@@ -263,6 +343,9 @@ impl App {
                         .to_ascii_lowercase()
                         .cmp(&pb.user.to_ascii_lowercase()),
                     SortField::Time => pa.run_time.cmp(&pb.run_time),
+                    SortField::Io => io_rate(pa)
+                        .partial_cmp(&io_rate(pb))
+                        .unwrap_or(std::cmp::Ordering::Equal),
                 };
                 if self.sort_desc {
                     ord.reverse()
@@ -455,6 +538,25 @@ impl App {
             return;
         }
 
+        // Connections view captures navigation while open.
+        if self.show_conn {
+            match key.code {
+                KeyCode::Char('q') => self.should_quit = true,
+                KeyCode::Esc | KeyCode::Char('n') => self.show_conn = false,
+                KeyCode::Up | KeyCode::Char('k') => self.scroll_conn(-1),
+                KeyCode::Down | KeyCode::Char('j') => self.scroll_conn(1),
+                KeyCode::PageUp => self.scroll_conn(-(self.conn_rows.max(1) as isize)),
+                KeyCode::PageDown => self.scroll_conn(self.conn_rows.max(1) as isize),
+                KeyCode::Home | KeyCode::Char('g') => self.conn_offset = 0,
+                KeyCode::End | KeyCode::Char('G') => {
+                    self.conn_offset = self.connections.len().saturating_sub(1)
+                }
+                KeyCode::Char('p') => self.cycle_theme(true),
+                _ => {}
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => {
@@ -497,6 +599,15 @@ impl App {
             KeyCode::Char('e') => {
                 self.per_core = !self.per_core;
             }
+            KeyCode::Char('L') => {
+                self.layout = self.layout.next();
+                self.set_status(format!("Layout: {}", self.layout.label()));
+            }
+            KeyCode::Char('n') => {
+                self.show_conn = true;
+                self.conn_offset = 0;
+                self.refresh_connections();
+            }
             KeyCode::Char('p') => self.cycle_theme(true),
             KeyCode::Char('P') => self.cycle_theme(false),
             KeyCode::Char('+') | KeyCode::Char('=') => self.adjust_tick(true),
@@ -515,6 +626,14 @@ impl App {
     /// Handle a mouse event over the process table.
     pub fn on_mouse(&mut self, ev: MouseEvent) {
         if self.show_help || self.pending_kill.is_some() || self.signal_menu.is_some() {
+            return;
+        }
+        if self.show_conn {
+            match ev.kind {
+                MouseEventKind::ScrollUp => self.scroll_conn(-3),
+                MouseEventKind::ScrollDown => self.scroll_conn(3),
+                _ => {}
+            }
             return;
         }
         match ev.kind {
@@ -560,8 +679,9 @@ pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
         8..=17 => Some(SortField::User),
         18..=23 => Some(SortField::Cpu),
         24..=37 => Some(SortField::Mem),
-        38..=45 => Some(SortField::Time),
-        46..=47 => None,
+        38..=46 => Some(SortField::Io),
+        47..=54 => Some(SortField::Time),
+        55..=56 => None,
         _ => Some(SortField::Name),
     }
 }
