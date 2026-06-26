@@ -41,7 +41,7 @@ OPTIONS:
         --remote-cmd <C> Command run on each remote (default: toptop --export json)
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
-        --export json    Print a machine-readable JSON snapshot and exit
+        --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -52,7 +52,7 @@ KEYS (in-app, press ? for the full list):
 fn main() -> Result<()> {
     let mut cfg = Config::load();
     let mut snapshot = false;
-    let mut export = false;
+    let mut export: Option<&'static str> = None;
     let mut start_ai = false;
     let mut remote_hosts: Vec<String> = Vec::new();
     let mut remote_cmd = "toptop --export json".to_string();
@@ -105,11 +105,18 @@ fn main() -> Result<()> {
             }
             "--snapshot" => snapshot = true,
             "--export" => {
-                // An optional format argument may follow; only `json` is supported.
-                if matches!(args.peek().map(|s| s.as_str()), Some("json")) {
-                    args.next();
-                }
-                export = true;
+                // Optional format argument: `json` (default) or `prometheus`.
+                export = Some(match args.peek().map(|s| s.as_str()) {
+                    Some("prometheus") | Some("prom") => {
+                        args.next();
+                        "prometheus"
+                    }
+                    Some("json") => {
+                        args.next();
+                        "json"
+                    }
+                    _ => "json",
+                });
             }
             other => {
                 eprintln!("toptop: unknown argument '{other}' (try --help)");
@@ -118,8 +125,8 @@ fn main() -> Result<()> {
         }
     }
 
-    if export {
-        return run_export(&cfg);
+    if let Some(format) = export {
+        return run_export(&cfg, format);
     }
 
     if snapshot {
@@ -145,11 +152,14 @@ fn main() -> Result<()> {
 
 /// Machine-readable JSON snapshot — the building block for multi-host
 /// monitoring and external dashboards.
-fn run_export(cfg: &Config) -> Result<()> {
+fn run_export(cfg: &Config, format: &str) -> Result<()> {
     let mut app = App::new(cfg);
     std::thread::sleep(Duration::from_millis(350));
     app.on_tick();
-    println!("{}", toptop::export::to_json(&app.collector, 20));
+    match format {
+        "prometheus" => print!("{}", toptop::export::to_prometheus(&app.collector)),
+        _ => println!("{}", toptop::export::to_json(&app.collector, 20)),
+    }
     io::stdout().flush().ok();
     Ok(())
 }

@@ -4,20 +4,53 @@
 
 <br>
 
-**htop power · btop looks · a local‑LLM brain · written in Rust · one tiny binary**
+### the local‑inference observability layer for your terminal
+
+**Live tokens/sec · VRAM‑spill & throttle warnings · the GPU metrics `nvidia-smi` can't show —
+with a gorgeous full system monitor underneath. Rust · one tiny binary · zero deps.**
 
 [![CI](https://github.com/ur-grue/toptop/actions/workflows/ci.yml/badge.svg)](https://github.com/ur-grue/toptop/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-61%20green-success)
+![Tests](https://img.shields.io/badge/tests-62%20green-success)
 
-[Features](#-features) · [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Install](#-install) · [Keys](#-keybindings) · [Themes](#-themes)
+[AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
 </div>
 
 ---
+
+**The local‑inference view (press `a`) — the numbers `nvidia-smi` doesn't show you:**
+
+```text
+╭ AI · local-LLM GPU view · Esc/a to close ──────────────────────────────────╮
+│gpu0  NVIDIA GeForce RTX 4090   290/450W  72°C                              │
+│  compute   █████████▎░░░░░░░░░░░░░░░░░░░░  31%                             │
+│  mem b/w   ███████████████████████▍░░░░░░  78%                             │
+│  vram      ███████████████████████████▌░░ 22.0 GiB / 24.0 GiB              │
+│             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)     │
+│                                                                            │
+│Inference servers (auto-discovered)                                         │
+│  vLLM :8000  meta-llama/Llama-3-8B                                         │
+│    83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms  │
+│                                                                            │
+│GPU processes (by VRAM)                                                     │
+│      PID       VRAM   CPU%  PROCESS                                        │
+│      559   22.0 GiB    0.0  Bun Pool 0                                     │
+╰────────────────────────────────────────────────────────────────────────────╯
+```
+
+> Local LLMs are **memory‑bandwidth bound** once the model is resident, so a GPU at "31% util" can
+> still be your bottleneck. toptop shows **compute vs. bandwidth** side by side, warns **before**
+> VRAM spills to system RAM (a 5–20× slowdown), reads the driver's throttle reasons, and
+> **auto‑discovers your inference servers** (vLLM · llama.cpp · Ollama · TGI) to scrape live
+> **tokens/sec**, KV‑cache pressure and queue depth — then exports it as JSON **or Prometheus**
+> for Grafana, or fans out across a cluster with the [fleet view](#-multi-host-fleet-view).
+
+<details open>
+<summary><b>🖥️ …and a gorgeous full system monitor</b> &nbsp;(the default view)</summary>
 
 ```text
 ▟▛ toptop  vm  Linux (Ubuntu 24.04)  kernel 6.18.5  up 00:03:50  load 0.34 0.39 0.18  111 tasks, 1 run
@@ -40,31 +73,9 @@
 ?:help a:ai Enter:detail n:net s:sort t:tree /:filter K:signal L:layout q:quit
 ```
 
-> A fast, beautiful, at‑a‑glance view of your machine — high‑resolution braille graphs,
-> truecolor gradient meters, an interactive process table, GPU + sensors, a network‑connections
-> inspector, a **local‑LLM dashboard** (tokens/sec, VRAM, throttle) and a **multi‑host fleet
-> view** — all in a single **~1 MB binary with zero runtime dependencies**.
-
-<details>
-<summary><b>🤖 AI / local‑LLM view</b> &nbsp;(<code>a</code>) — the metrics nvidia‑smi can't see</summary>
-
-```text
-╭ AI · local-LLM GPU view · Esc/a to close ──────────────────────────────────╮
-│gpu0  NVIDIA GeForce RTX 4090   290/450W  72°C                              │
-│  compute   █████████▎░░░░░░░░░░░░░░░░░░░░  31%                             │
-│  mem b/w   ███████████████████████▍░░░░░░  78%                             │
-│  vram      ███████████████████████████▌░░ 22.0 GiB / 24.0 GiB              │
-│             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)     │
-│                                                                            │
-│Inference servers (auto-discovered)                                         │
-│  vLLM :8000  meta-llama/Llama-3-8B                                         │
-│    83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms  │
-│                                                                            │
-│GPU processes (by VRAM)                                                     │
-│      PID       VRAM   CPU%  PROCESS                                        │
-│      559   22.0 GiB    0.0  Bun Pool 0                                     │
-╰────────────────────────────────────────────────────────────────────────────╯
-```
+High‑resolution braille graphs, truecolor gradient meters, an interactive process table (tree,
+filter, click‑to‑sort, signal menu), per‑interface network, per‑mount disk + I/O, temperature
+sensors, battery, six themes — all in a single **~1 MB binary with zero runtime dependencies**.
 </details>
 
 <details>
@@ -84,27 +95,29 @@
 
 ## ✨ Features
 
+**For local inference / LLMOps**
+
+| | |
+|---|---|
+| 🤖 **AI / local‑LLM view** | compute **vs. memory‑bandwidth** util, VRAM spill warning, throttle flag, per‑process VRAM, tokens/sec/watt, serving‑vs‑training detection (press `a`) |
+| 🔭 **Server auto‑discovery** | finds listening vLLM / llama.cpp / Ollama / TGI and scrapes live **tokens/sec**, KV‑cache, queue depth, TTFT — no config |
+| 🎮 **Multi‑vendor GPU** | NVIDIA (`nvidia-smi`) **and** AMD/Intel (`sysfs`), polled off‑thread — util, bandwidth, VRAM, power, temp, throttle |
+| 📡 **Export & scrape** | `--export json` and `--export prometheus` — wire toptop into Grafana as an inference metrics source |
+| 🛰️ **Multi‑host fleet** | `--remote h1,h2,…` aggregates a cluster over SSH — Σ tokens/sec, Σ VRAM, per‑host status |
+
+**As a general system monitor**
+
 | | |
 |---|---|
 | 📊 **High‑res braille graphs** | 2×4 dots per cell → 4× the detail of block graphs, with a vertical load gradient |
 | 🌈 **Truecolor gradient meters** | CPU (global + per‑core), RAM, swap, disks, GPU and sensors |
 | 🧠 **Interactive process table** | sort 6 ways, tree view, live filter, click‑to‑sort headers, full mouse support |
-| 🔎 **Process detail view** | PPID, state, threads, RSS/virtual mem, **live disk I/O rates**, start time, exe, cwd |
+| 🔎 **Process detail · I/O** | PPID, threads, RSS/virtual mem, **live disk I/O rates**, exe, cwd; a sortable `DISK` column |
 | ☠️ **Signal menu** | send any of nine signals (`SIGTERM`…`SIGUSR2`) behind a confirmation prompt |
-| 💾 **Per‑process I/O** | a live `DISK` column and sort key for read+write throughput |
-| 🌐 **Network panel** | per‑interface rx/tx with a mirrored braille graph and totals |
-| 🔌 **Connections inspector** | live TCP/UDP table mapping sockets → owning process (press `n`) |
-| 🗄️ **Disk panel** | per‑mount usage meters plus a mirrored read/write I/O graph |
-| 🎮 **GPU monitoring** | NVIDIA (`nvidia-smi`) **and** AMD/Intel (`sysfs`), polled off‑thread |
-| 🤖 **AI / local‑LLM view** | compute **vs. memory‑bandwidth** util, VRAM spill warning, per‑process VRAM, throttle flag, **auto‑discovered server tokens/sec**, tokens/sec/watt, and serving/training detection (press `a`) |
-| 🌡️ **Sensors & battery** | temperatures scaled to each critical threshold; battery in the header |
-| 🎨 **Six themes** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk`, cycle live with `p` |
-| 🧩 **Saveable layouts** | `full` / `cpu` / `process` presets, cycled with `L` and persisted |
-| 🕐 **Live header** | wall clock, uptime, load average, task counts, battery |
-| 📐 **Adaptive layout** | reflows cleanly from a 250‑column desktop down to a tiny pane |
-| 🪶 **Tiny & safe** | ~1 MB binary, no runtime deps, restores your terminal even on panic |
-| 🛰️ **Multi‑host fleet** | `--remote h1,h2,…` aggregates a cluster over SSH — Σ tokens/sec, Σ VRAM, per‑host status |
-| 🤖 **Headless / export** | `--snapshot` (text) and `--export json` (machine‑readable, incl. server tokens/sec) |
+| 🌐 **Network + connections** | per‑interface rx/tx braille graph; a live TCP/UDP table mapping sockets → process (`n`) |
+| 🗄️ **Disk + sensors** | per‑mount usage, read/write I/O graph, temperatures, battery |
+| 🎨 **Six themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk`; `full`/`cpu`/`process` presets |
+| 🪶 **Tiny & safe** | ~1 MB binary, zero runtime deps, adaptive 250‑col→tiny layout, restores your terminal even on panic |
 
 ## 🤖 For AI engineers
 
@@ -150,9 +163,34 @@ Inference servers (auto-discovered)
     83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms
 ```
 
-Pipe all of it anywhere with `toptop --export json` (GPU bandwidth/power/throttle,
-GPU processes, **and** discovered servers with tokens/sec) — the building block
-for the fleet view below.
+## 📡 Export & observability
+
+toptop isn't just a live dashboard — it's a metrics **source**. Emit a snapshot as
+machine‑readable JSON or **Prometheus** exposition text and scrape it into Grafana /
+VictoriaMetrics to chart tokens/sec, VRAM pressure, throttle events and queue depth over time:
+
+```bash
+toptop --export json          # full snapshot incl. GPU bandwidth/power + server tokens/sec
+toptop --export prometheus    # Prometheus text format for Grafana / VictoriaMetrics
+```
+
+```text
+# TYPE toptop_gpu_mem_bandwidth_percent gauge
+toptop_gpu_mem_bandwidth_percent{gpu="0",name="NVIDIA GeForce RTX 4090"} 78.00
+# TYPE toptop_inference_tokens_per_second gauge
+toptop_inference_tokens_per_second{runtime="vLLM",port="8000",model="meta-llama/Llama-3-8B"} 83.40
+toptop_gpu_throttled{gpu="0",name="NVIDIA GeForce RTX 4090"} 0
+```
+
+The same JSON is the building block for the multi‑host fleet view below.
+
+## 🔒 What it accesses
+
+No surprises for serious infra: toptop is **read‑only**, **local‑first**, and has **no daemon
+and no telemetry**. GPU stats come from `nvidia-smi` / `sysfs`; inference metrics from a
+**localhost‑only** HTTP scrape of servers you're already running; the fleet view shells out to
+**`ssh` using your own keys/agent** (`BatchMode`, never prompting). Nothing is sent anywhere you
+don't point it at.
 
 ## 🛰️ Multi-host fleet view
 
@@ -246,7 +284,7 @@ OPTIONS:
         --remote-cmd <C> Command run on each remote (default: toptop --export json)
         --list-themes    Print available themes and exit
         --snapshot       Print a one‑shot text snapshot and exit (no TUI)
-        --export json    Print a machine‑readable JSON snapshot and exit
+        --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
     -h, --help           Show help
     -V, --version        Show version
 ```

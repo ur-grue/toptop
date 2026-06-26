@@ -32,8 +32,9 @@ Start in flat process view.
 .B \-\-ai
 Open the AI / local-LLM GPU view on launch.
 .TP
-.B \-\-export " " json
-Print a machine-readable JSON snapshot and exit (no TUI).
+.BR \-\-export " " \fIFMT\fR
+Print metrics and exit (no TUI): \fIjson\fR (default) or \fIprometheus\fR
+(Prometheus exposition format for Grafana/VictoriaMetrics).
 .TP
 .B \-\-list\-themes
 Print available themes and exit.

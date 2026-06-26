@@ -238,6 +238,112 @@ pub fn to_json(c: &Collector, top_procs: usize) -> String {
     s
 }
 
+// ── Prometheus exposition format ───────────────────────────────────────────
+
+/// Sanitize a label value for the Prometheus text format.
+fn plabel(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+}
+
+/// Render a snapshot in Prometheus exposition format so toptop can be scraped
+/// into Grafana/VictoriaMetrics — the local-inference observability layer.
+/// Pair with a tiny `socat`/`while` loop, or scrape `--export json` directly.
+pub fn to_prometheus(c: &Collector) -> String {
+    let mut s = String::with_capacity(4096);
+    let mut metric = |name: &str, help: &str, value: String| {
+        s.push_str(&format!(
+            "# HELP {name} {help}\n# TYPE {name} gauge\n{value}"
+        ));
+    };
+
+    metric(
+        "toptop_cpu_usage_percent",
+        "Global CPU utilization.",
+        format!("toptop_cpu_usage_percent {:.2}\n", c.cpu.global_usage),
+    );
+    metric(
+        "toptop_load1",
+        "1-minute load average.",
+        format!("toptop_load1 {:.2}\n", c.cpu.load_avg.0),
+    );
+    metric(
+        "toptop_mem_used_bytes",
+        "Used physical memory.",
+        format!(
+            "toptop_mem_used_bytes {}\ntoptop_mem_total_bytes {}\n",
+            c.mem.used, c.mem.total
+        ),
+    );
+    metric(
+        "toptop_uptime_seconds",
+        "System uptime.",
+        format!(
+            "toptop_uptime_seconds {}\ntoptop_tasks {}\n",
+            c.uptime,
+            c.procs.len()
+        ),
+    );
+
+    // GPUs.
+    if !c.gpus.is_empty() {
+        s.push_str("# HELP toptop_gpu_util_percent GPU core utilization.\n# TYPE toptop_gpu_util_percent gauge\n");
+        for (i, g) in c.gpus.iter().enumerate() {
+            let l = format!("gpu=\"{}\",name=\"{}\"", i, plabel(&g.name));
+            s.push_str(&format!(
+                "toptop_gpu_util_percent{{{l}}} {:.2}\n",
+                g.util_pct
+            ));
+            if g.has_mem_util {
+                s.push_str(&format!(
+                    "toptop_gpu_mem_bandwidth_percent{{{l}}} {:.2}\n",
+                    g.mem_util
+                ));
+            }
+            s.push_str(&format!(
+                "toptop_gpu_mem_used_bytes{{{l}}} {}\n",
+                g.mem_used
+            ));
+            s.push_str(&format!(
+                "toptop_gpu_mem_total_bytes{{{l}}} {}\n",
+                g.mem_total
+            ));
+            s.push_str(&format!("toptop_gpu_power_watts{{{l}}} {:.2}\n", g.power));
+            s.push_str(&format!("toptop_gpu_temp_celsius{{{l}}} {:.2}\n", g.temp));
+            s.push_str(&format!(
+                "toptop_gpu_throttled{{{l}}} {}\n",
+                if g.throttled { 1 } else { 0 }
+            ));
+        }
+    }
+
+    // Inference servers — the headline LLMOps signals.
+    if !c.servers.is_empty() {
+        s.push_str("# HELP toptop_inference_tokens_per_second Generation throughput.\n# TYPE toptop_inference_tokens_per_second gauge\n");
+        for sv in &c.servers {
+            let l = format!(
+                "runtime=\"{}\",port=\"{}\",model=\"{}\"",
+                plabel(sv.runtime),
+                sv.port,
+                plabel(&sv.model)
+            );
+            let g = |name: &str, v: Option<f64>| {
+                v.map(|v| format!("toptop_inference_{name}{{{l}}} {v:.2}\n"))
+                    .unwrap_or_default()
+            };
+            s.push_str(&g("tokens_per_second", sv.gen_tps));
+            s.push_str(&g("prefill_tokens_per_second", sv.prompt_tps));
+            s.push_str(&g("kv_cache_percent", sv.kv_pct));
+            s.push_str(&g("requests_running", sv.running));
+            s.push_str(&g("requests_waiting", sv.waiting));
+            s.push_str(&g("ttft_ms", sv.ttft_ms));
+        }
+    }
+
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +388,23 @@ mod tests {
         let brackets = json.chars().filter(|&c| c == '[').count()
             == json.chars().filter(|&c| c == ']').count();
         assert!(braces && brackets);
+    }
+
+    #[test]
+    fn prometheus_has_core_metrics() {
+        let c = Collector::new(64);
+        let p = to_prometheus(&c);
+        for m in [
+            "# TYPE toptop_cpu_usage_percent gauge",
+            "toptop_mem_total_bytes ",
+            "toptop_uptime_seconds ",
+        ] {
+            assert!(p.contains(m), "missing {m}");
+        }
+        // Every metric line must be `name value` or `name{labels} value`.
+        for line in p.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+            let val = line.rsplit(' ').next().unwrap();
+            assert!(val.parse::<f64>().is_ok(), "bad metric line: {line}");
+        }
     }
 }
