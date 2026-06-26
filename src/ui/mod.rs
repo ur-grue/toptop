@@ -39,6 +39,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.show_conn {
         render_connections(f, area, app);
     }
+    if app.show_ai {
+        render_ai(f, area, app);
+    }
     if app.show_detail {
         render_detail(f, area, app);
     }
@@ -800,6 +803,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
     for (k, d) in [
         ("?", "help"),
+        ("a", "ai"),
         ("Enter", "detail"),
         ("n", "net"),
         ("s", "sort"),
@@ -962,6 +966,218 @@ fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app:
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
+/// The AI / local-LLM view: the GPU metrics that actually predict inference
+/// performance — core vs. memory-bandwidth utilization, VRAM headroom (spill
+/// risk), power/throttle, and which processes hold GPU memory.
+fn render_ai(f: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme();
+    let c = &app.collector;
+    let rect = centered(area, 78.min(area.width), 26.min(area.height));
+    f.render_widget(Clear, rect);
+    let block = panel("AI · local-LLM GPU view · Esc/a to close", theme);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    if inner.width < 4 || inner.height < 2 {
+        return;
+    }
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let bw = (inner.width as usize).saturating_sub(26).clamp(6, 30);
+
+    if c.gpus.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No GPU detected — showing CPU-based inference below.",
+            dim(theme),
+        )));
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    for (i, g) in c.gpus.iter().enumerate() {
+        let u = clamp_pct(g.util_pct);
+        let mem_pct = clamp_pct(g.mem_pct());
+        // Header line: name + power/throttle.
+        let mut head = vec![Span::styled(
+            format!("gpu{}  {}", i, truncate(&g.name, 26)),
+            Style::default()
+                .fg(theme.accent2.color())
+                .add_modifier(Modifier::BOLD),
+        )];
+        if g.power_limit > 0.0 {
+            head.push(Span::styled(
+                format!("   {:.0}/{:.0}W", g.power, g.power_limit),
+                dim(theme),
+            ));
+        }
+        if g.temp > 0.0 {
+            head.push(Span::styled(
+                format!("  {:.0}°C", g.temp),
+                Style::default().fg(theme.grad((g.temp / 95.0).clamp(0.0, 1.0))),
+            ));
+        }
+        if g.throttled {
+            head.push(Span::styled(
+                "  ⚠ THROTTLING",
+                Style::default()
+                    .fg(theme.grad(1.0))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        lines.push(Line::from(head));
+
+        // Core (compute) utilization.
+        let mut core = vec![Span::styled(format!("  {:<10}", "compute"), dim(theme))];
+        if g.has_util {
+            core.extend(graph::meter_spans(u, bw, theme));
+            core.push(Span::styled(
+                format!(" {:>3.0}%", u),
+                Style::default().fg(theme.grad(u / 100.0)),
+            ));
+        } else {
+            core.push(Span::styled("   --", dim(theme)));
+        }
+        lines.push(Line::from(core));
+
+        // Memory-bandwidth utilization — the LLM bottleneck nvidia-smi hides.
+        let mut band = vec![Span::styled(format!("  {:<10}", "mem b/w"), dim(theme))];
+        if g.has_mem_util {
+            let mu = clamp_pct(g.mem_util);
+            band.extend(graph::meter_spans(mu, bw, theme));
+            band.push(Span::styled(
+                format!(" {:>3.0}%", mu),
+                Style::default().fg(theme.grad(mu / 100.0)),
+            ));
+        } else {
+            band.push(Span::styled("   n/a (needs NVIDIA)", dim(theme)));
+        }
+        lines.push(Line::from(band));
+
+        // VRAM with headroom + spill warning.
+        let mut vram = vec![Span::styled(format!("  {:<10}", "vram"), dim(theme))];
+        vram.extend(graph::meter_spans(mem_pct, bw, theme));
+        vram.push(Span::styled(
+            format!(
+                " {} / {}",
+                human_bytes(g.mem_used),
+                human_bytes(g.mem_total)
+            ),
+            Style::default().fg(theme.grad(mem_pct / 100.0)),
+        ));
+        lines.push(Line::from(vram));
+        if mem_pct >= 90.0 {
+            lines.push(Line::from(Span::styled(
+                "             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)",
+                Style::default().fg(theme.grad(1.0)),
+            )));
+        }
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    // Detected local-inference runtimes (ollama, llama.cpp, vLLM, …), joined to
+    // CPU/RAM and — where the PID matches a GPU compute process — VRAM.
+    let mut inference: Vec<(&'static str, &crate::metrics::ProcInfo, u64)> = c
+        .procs
+        .iter()
+        .filter_map(|p| {
+            crate::metrics::ai::inference_runtime(&p.name, &p.cmd).map(|rt| {
+                let vram = c
+                    .gpu_procs
+                    .iter()
+                    .find(|gp| gp.pid == p.pid)
+                    .map(|gp| gp.used_mem)
+                    .unwrap_or(0);
+                (rt, p, vram)
+            })
+        })
+        .collect();
+    if !inference.is_empty() {
+        inference.sort_by(|a, b| {
+            b.1.cpu
+                .partial_cmp(&a.1.cpu)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        lines.push(Line::from(Span::styled(
+            "Inference runtimes",
+            Style::default()
+                .fg(theme.accent.color())
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!(
+                "  {:<11} {:>7} {:>5} {:>9} {:>9}",
+                "RUNTIME", "PID", "CPU%", "RAM", "VRAM"
+            ),
+            dim(theme),
+        )));
+        let cap = inner.height as usize;
+        for (rt, p, vram) in &inference {
+            if lines.len() >= cap {
+                break;
+            }
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {:<11} {:>7} {:>5.1} {:>9} {:>9}",
+                    rt,
+                    p.pid,
+                    p.cpu,
+                    human_bytes(p.mem_bytes),
+                    if *vram > 0 {
+                        human_bytes(*vram)
+                    } else {
+                        "—".to_string()
+                    }
+                ),
+                Style::default().fg(theme.fg.color()),
+            )));
+        }
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    // Per-process VRAM, joined with our process table for names + CPU%.
+    if !c.gpu_procs.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "GPU processes (by VRAM)",
+            Style::default()
+                .fg(theme.accent.color())
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(vec![Span::styled(
+            format!(
+                "  {:>7}  {:>9}  {:>5}  {}",
+                "PID", "VRAM", "CPU%", "PROCESS"
+            ),
+            dim(theme),
+        )]));
+        let mut gprocs = c.gpu_procs.clone();
+        gprocs.sort_by(|a, b| b.used_mem.cmp(&a.used_mem));
+        let cap = inner.height as usize;
+        for gp in gprocs.iter() {
+            if lines.len() >= cap {
+                break;
+            }
+            let proc = c.procs.iter().find(|p| p.pid == gp.pid);
+            let name = proc.map(|p| p.name.as_str()).unwrap_or("?");
+            let cpu = proc.map(|p| p.cpu).unwrap_or(0.0);
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {:>7}  {:>9}  {:>5.1}  {}",
+                    gp.pid,
+                    human_bytes(gp.used_mem),
+                    cpu,
+                    truncate(name, 28)
+                ),
+                Style::default().fg(theme.fg.color()),
+            )));
+        }
+    } else if c.gpus.iter().any(|g| g.name.contains("NVIDIA")) {
+        lines.push(Line::from(Span::styled(
+            "No GPU compute processes (or insufficient permissions).",
+            dim(theme),
+        )));
+    }
+
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = app.theme();
     let rect = Rect {
@@ -1088,6 +1304,7 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("click header", "sort by column"),
         ("t", "toggle process tree"),
         ("e", "toggle per-core CPU meters"),
+        ("a", "AI / local-LLM GPU view"),
         ("n", "network connections"),
         ("L", "cycle layout preset"),
         ("/", "filter processes"),

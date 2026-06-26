@@ -144,6 +144,8 @@ pub struct App {
     pub signal_menu: Option<usize>,
     /// Whether the process detail overlay is shown for the selection.
     pub show_detail: bool,
+    /// Whether the AI/LLM GPU view is shown.
+    pub show_ai: bool,
     /// Whether the network-connections view is shown.
     pub show_conn: bool,
     /// Latest connection snapshot (refreshed while the view is open).
@@ -181,6 +183,7 @@ impl App {
             pending_kill: None,
             signal_menu: None,
             show_detail: false,
+            show_ai: false,
             show_conn: false,
             connections: Vec::new(),
             conn_offset: 0,
@@ -561,7 +564,9 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => {
                 // Esc peels back overlays in order, then clears a filter, then quits.
-                if self.show_detail {
+                if self.show_ai {
+                    self.show_ai = false;
+                } else if self.show_detail {
                     self.show_detail = false;
                 } else if !self.filter.is_empty() {
                     self.filter.clear();
@@ -608,6 +613,7 @@ impl App {
                 self.conn_offset = 0;
                 self.refresh_connections();
             }
+            KeyCode::Char('a') => self.show_ai = !self.show_ai,
             KeyCode::Char('p') => self.cycle_theme(true),
             KeyCode::Char('P') => self.cycle_theme(false),
             KeyCode::Char('+') | KeyCode::Char('=') => self.adjust_tick(true),

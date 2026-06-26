@@ -26,6 +26,7 @@ fn main() {
             app.show_conn = true;
             app.connections = app.collector.connections();
         }
+        "ai" => app.show_ai = true,
         "detail" => app.show_detail = true,
         "signal" => {
             use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

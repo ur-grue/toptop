@@ -11,11 +11,12 @@ use sysinfo::{
     ProcessStatus, ProcessesToUpdate, RefreshKind, Signal, System, UpdateKind, Users,
 };
 
+pub mod ai;
 pub mod gpu;
 pub mod netconn;
 
 use crate::history::History;
-use gpu::{Gpu, GpuMonitor};
+use gpu::{Gpu, GpuMonitor, GpuProc};
 pub use netconn::Connection;
 
 /// Static-ish information about the host, captured once at startup.
@@ -151,6 +152,8 @@ pub struct Collector {
     pub procs: Vec<ProcInfo>,
     pub sensors: Vec<SensorInfo>,
     pub gpus: Vec<Gpu>,
+    /// Processes holding GPU memory (NVIDIA only), for the AI/LLM view.
+    pub gpu_procs: Vec<GpuProc>,
     pub battery: Option<Battery>,
     pub uptime: u64,
 }
@@ -232,6 +235,7 @@ impl Collector {
             procs: Vec::new(),
             sensors: Vec::new(),
             gpus: Vec::new(),
+            gpu_procs: Vec::new(),
             battery: None,
             uptime: 0,
         };
@@ -264,7 +268,9 @@ impl Collector {
         self.refresh_disks(elapsed);
         self.refresh_procs(elapsed);
         self.refresh_sensors();
-        self.gpus = self.gpu_monitor.snapshot();
+        let gpu_snap = self.gpu_monitor.snapshot();
+        self.gpus = gpu_snap.gpus;
+        self.gpu_procs = gpu_snap.procs;
         self.battery = read_battery();
     }
 

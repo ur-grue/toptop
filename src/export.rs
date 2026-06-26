@@ -122,17 +122,43 @@ pub fn to_json(c: &Collector, top_procs: usize) -> String {
         .iter()
         .map(|g| {
             format!(
-                "{{\"name\":\"{}\",\"util\":{},\"has_util\":{},\"mem_used\":{},\"mem_total\":{},\"temp\":{}}}",
+                "{{\"name\":\"{}\",\"util\":{},\"has_util\":{},\"mem_util\":{},\"has_mem_util\":{},\"mem_used\":{},\"mem_total\":{},\"temp\":{},\"power\":{},\"power_limit\":{},\"throttled\":{}}}",
                 esc(&g.name),
                 num(g.util_pct as f64),
                 g.has_util,
+                num(g.mem_util as f64),
+                g.has_mem_util,
                 g.mem_used,
                 g.mem_total,
-                num(g.temp as f64)
+                num(g.temp as f64),
+                num(g.power as f64),
+                num(g.power_limit as f64),
+                g.throttled
             )
         })
         .collect();
     s.push_str(&format!("\"gpus\":[{}],", gpus.join(",")));
+
+    // GPU compute processes (NVIDIA), joined to process names where known.
+    let gpu_procs: Vec<String> = c
+        .gpu_procs
+        .iter()
+        .map(|gp| {
+            let name = c
+                .procs
+                .iter()
+                .find(|p| p.pid == gp.pid)
+                .map(|p| p.name.as_str())
+                .unwrap_or("");
+            format!(
+                "{{\"pid\":{},\"name\":\"{}\",\"used_mem\":{}}}",
+                gp.pid,
+                esc(name),
+                gp.used_mem
+            )
+        })
+        .collect();
+    s.push_str(&format!("\"gpu_procs\":[{}],", gpu_procs.join(",")));
 
     // sensors
     let sensors: Vec<String> = c

@@ -34,6 +34,7 @@ OPTIONS:
         --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix)
         --tree           Start in process-tree view
         --no-tree        Start in flat process view
+        --ai             Open the AI / local-LLM GPU view on launch
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export json    Print a machine-readable JSON snapshot and exit
@@ -48,6 +49,7 @@ fn main() -> Result<()> {
     let mut cfg = Config::load();
     let mut snapshot = false;
     let mut export = false;
+    let mut start_ai = false;
 
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
@@ -81,6 +83,7 @@ fn main() -> Result<()> {
             }
             "--tree" => cfg.tree = true,
             "--no-tree" => cfg.tree = false,
+            "--ai" => start_ai = true,
             "--snapshot" => snapshot = true,
             "--export" => {
                 // An optional format argument may follow; only `json` is supported.
@@ -105,6 +108,7 @@ fn main() -> Result<()> {
     }
 
     let mut app = App::new(&cfg);
+    app.show_ai = start_ai;
     let mut terminal = setup_terminal().context("failed to initialize terminal")?;
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal).ok();

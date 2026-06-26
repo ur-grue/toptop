@@ -83,6 +83,39 @@ fn overlays_render() {
 }
 
 #[test]
+fn ai_view_renders() {
+    use toptop::metrics::gpu::{Gpu, GpuProc};
+    let mut app = App::new(&Config::default());
+
+    // Empty-state (no GPU) path.
+    app.show_ai = true;
+    render_at(&mut app, 100, 30);
+
+    // Populated path: inject a near-full, throttling GPU and a compute process.
+    app.collector.gpus = vec![Gpu {
+        name: "NVIDIA GeForce RTX 4090".into(),
+        util_pct: 96.0,
+        has_util: true,
+        mem_util: 71.0,
+        has_mem_util: true,
+        mem_used: 23 * 1024 * 1024 * 1024,
+        mem_total: 24 * 1024 * 1024 * 1024,
+        temp: 84.0,
+        power: 410.0,
+        power_limit: 450.0,
+        throttled: true,
+    }];
+    app.collector.gpu_procs = vec![GpuProc {
+        pid: app.collector.procs.first().map(|p| p.pid).unwrap_or(1),
+        used_mem: 22 * 1024 * 1024 * 1024,
+    }];
+    render_at(&mut app, 100, 30);
+    render_at(&mut app, 60, 14); // cramped
+    app.on_key(key(KeyCode::Char('a')));
+    assert!(!app.show_ai);
+}
+
+#[test]
 fn layout_presets_render() {
     let mut app = App::new(&Config::default());
     // Cycle through every layout preset and render the full body each time.

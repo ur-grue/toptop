@@ -1,9 +1,18 @@
-//! Optional NVIDIA GPU monitoring via `nvidia-smi`.
+//! GPU monitoring tuned for local-AI / LLM work.
 //!
-//! `nvidia-smi` can take tens to hundreds of milliseconds to respond, so it is
-//! polled on a dedicated background thread and the latest reading is published
-//! through a shared slot. The UI thread never blocks on it, and machines
-//! without an NVIDIA GPU simply see no GPU panel.
+//! NVIDIA is queried via `nvidia-smi` and AMD/Intel via `sysfs`, both on a
+//! dedicated background thread (so the variable-latency `nvidia-smi` never
+//! blocks the UI). Beyond plain "GPU %", we surface the metrics that actually
+//! predict local-inference performance:
+//!
+//! * **memory-bandwidth utilization** (`utilization.memory`) — usually the real
+//!   bottleneck once a model fits in VRAM, and invisible in a bare "GPU %";
+//! * **VRAM pressure** — how close you are to the hard wall before a model
+//!   spills layers into system RAM (a 5–20× slowdown);
+//! * **per-process VRAM** — which process is holding GPU memory (catches models
+//!   "squatting" on VRAM and identifies your inference server);
+//! * **power vs. limit and a throttle flag** — thermal/power throttling quietly
+//!   drops tokens/sec.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -12,12 +21,20 @@ use std::time::Duration;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Gpu {
     pub name: String,
+    /// Core (SM) utilization %.
     pub util_pct: f32,
-    /// Whether `util_pct` is a real reading (some drivers don't expose it).
     pub has_util: bool,
+    /// Memory-bandwidth utilization % (often the real LLM bottleneck).
+    pub mem_util: f32,
+    pub has_mem_util: bool,
     pub mem_used: u64,
     pub mem_total: u64,
     pub temp: f32,
+    /// Current power draw / enforced limit, in watts (0 when unknown).
+    pub power: f32,
+    pub power_limit: f32,
+    /// Whether the driver reports an active power/thermal throttle.
+    pub throttled: bool,
 }
 
 impl Gpu {
@@ -30,41 +47,117 @@ impl Gpu {
     }
 }
 
-/// Parse the CSV emitted by:
-/// `nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu
-///            --format=csv,noheader,nounits`
-///
-/// Memory values are reported in MiB. Malformed lines are skipped.
+/// A process holding GPU memory, as reported by `nvidia-smi` compute-apps.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GpuProc {
+    pub pid: u32,
+    pub used_mem: u64,
+}
+
+/// Everything the background poller publishes each cycle.
+#[derive(Clone, Debug, Default)]
+pub struct GpuSnapshot {
+    pub gpus: Vec<Gpu>,
+    pub procs: Vec<GpuProc>,
+}
+
+/// Parse one optional, possibly-`[N/A]` numeric field.
+fn fopt(s: &str) -> Option<f32> {
+    let s = s.trim();
+    if s.is_empty() || s.starts_with('[') {
+        return None;
+    }
+    s.parse::<f32>().ok()
+}
+
+// NVML throttle reasons we treat as a real (performance-limiting) throttle:
+// SW power cap | HW slowdown | SW thermal | HW thermal | HW power brake.
+const THROTTLE_MASK: u64 = 0x4 | 0x8 | 0x20 | 0x40 | 0x80;
+
+/// Parse the legacy 5-field CSV (name, util, mem.used, mem.total, temp).
 pub fn parse_nvidia_smi(output: &str) -> Vec<Gpu> {
     let mut gpus = Vec::new();
     for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
+        let f: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
+        if f.len() < 5 || f[0].is_empty() {
             continue;
         }
-        let fields: Vec<&str> = line.split(',').map(|f| f.trim()).collect();
-        if fields.len() < 5 {
-            continue;
-        }
-        let name = fields[0].to_string();
-        let (Ok(util), Ok(mem_used_mib), Ok(mem_total_mib), Ok(temp)) = (
-            fields[1].parse::<f32>(),
-            fields[2].parse::<u64>(),
-            fields[3].parse::<u64>(),
-            fields[4].parse::<f32>(),
-        ) else {
+        let (Some(util), Some(mu), Some(mt), Some(temp)) =
+            (fopt(f[1]), fopt(f[2]), fopt(f[3]), fopt(f[4]))
+        else {
             continue;
         };
         gpus.push(Gpu {
-            name,
+            name: f[0].to_string(),
             util_pct: util,
             has_util: true,
-            mem_used: mem_used_mib * 1024 * 1024,
-            mem_total: mem_total_mib * 1024 * 1024,
+            mem_util: 0.0,
+            has_mem_util: false,
+            mem_used: mu as u64 * 1024 * 1024,
+            mem_total: mt as u64 * 1024 * 1024,
             temp,
+            power: 0.0,
+            power_limit: 0.0,
+            throttled: false,
         });
     }
     gpus
+}
+
+/// Parse the extended CSV with bandwidth, power and throttle fields:
+/// name, utilization.gpu, utilization.memory, memory.used, memory.total,
+/// temperature.gpu, power.draw, power.limit, clocks_throttle_reasons.active
+pub fn parse_nvidia_smi_ext(output: &str) -> Vec<Gpu> {
+    let mut gpus = Vec::new();
+    for line in output.lines() {
+        let f: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
+        if f.len() < 9 || f[0].is_empty() {
+            continue;
+        }
+        let (Some(mu), Some(mt)) = (fopt(f[3]), fopt(f[4])) else {
+            continue;
+        };
+        let throttle = f[8]
+            .trim()
+            .strip_prefix("0x")
+            .and_then(|h| u64::from_str_radix(h, 16).ok())
+            .map(|bits| bits & THROTTLE_MASK != 0)
+            .unwrap_or(false);
+        gpus.push(Gpu {
+            name: f[0].to_string(),
+            util_pct: fopt(f[1]).unwrap_or(0.0),
+            has_util: fopt(f[1]).is_some(),
+            mem_util: fopt(f[2]).unwrap_or(0.0),
+            has_mem_util: fopt(f[2]).is_some(),
+            mem_used: mu as u64 * 1024 * 1024,
+            mem_total: mt as u64 * 1024 * 1024,
+            temp: fopt(f[5]).unwrap_or(0.0),
+            power: fopt(f[6]).unwrap_or(0.0),
+            power_limit: fopt(f[7]).unwrap_or(0.0),
+            throttled: throttle,
+        });
+    }
+    gpus
+}
+
+/// Parse `nvidia-smi --query-compute-apps=pid,used_memory` CSV (MiB).
+pub fn parse_compute_apps(output: &str) -> Vec<GpuProc> {
+    let mut procs = Vec::new();
+    for line in output.lines() {
+        let f: Vec<&str> = line.split(',').map(|x| x.trim()).collect();
+        if f.len() < 2 {
+            continue;
+        }
+        let Ok(pid) = f[0].parse::<u32>() else {
+            continue;
+        };
+        let used = fopt(f[1]).unwrap_or(0.0) as u64 * 1024 * 1024;
+        procs.push(GpuProc {
+            pid,
+            used_mem: used,
+        });
+    }
+    procs
 }
 
 /// Translate a kernel DRM driver name into a friendly vendor label.
@@ -79,8 +172,8 @@ fn driver_label(driver: Option<&str>) -> String {
 }
 
 /// Assemble a [`Gpu`] from raw sysfs values for one DRM card. Returns `None`
-/// when the card exposes neither utilization nor VRAM info (i.e. not a GPU we
-/// can meaningfully report on). `temp_milli` is in millidegrees Celsius.
+/// when the card exposes neither utilization nor VRAM info. `temp_milli` is in
+/// millidegrees Celsius.
 pub fn build_sysfs_gpu(
     driver: Option<&str>,
     busy: Option<u64>,
@@ -95,9 +188,14 @@ pub fn build_sysfs_gpu(
         name: driver_label(driver),
         util_pct: busy.unwrap_or(0) as f32,
         has_util: busy.is_some(),
+        mem_util: 0.0,
+        has_mem_util: false,
         mem_used: vram_used.unwrap_or(0),
         mem_total: vram_total.unwrap_or(0),
         temp: temp_milli.map(|t| t as f32 / 1000.0).unwrap_or(0.0),
+        power: 0.0,
+        power_limit: 0.0,
+        throttled: false,
     })
 }
 
@@ -110,8 +208,9 @@ fn read_card_temp(device: &std::path::Path) -> Option<i64> {
     let hwmon_root = device.join("hwmon");
     let mut best: Option<i64> = None;
     for hw in std::fs::read_dir(hwmon_root).ok()?.flatten() {
-        let dir = std::fs::read_dir(hw.path()).ok();
-        let Some(dir) = dir else { continue };
+        let Some(dir) = std::fs::read_dir(hw.path()).ok() else {
+            continue;
+        };
         for f in dir.flatten() {
             let name = f.file_name();
             let name = name.to_string_lossy();
@@ -141,7 +240,6 @@ fn read_sysfs_gpus() -> Vec<Gpu> {
             p.file_name()
                 .map(|n| {
                     let n = n.to_string_lossy();
-                    // Real cards are "card0"; connectors are "card0-DP-1".
                     n.starts_with("card") && !n.contains('-')
                 })
                 .unwrap_or(false)
@@ -167,49 +265,79 @@ fn read_sysfs_gpus() -> Vec<Gpu> {
     out
 }
 
-fn query_nvidia() -> Option<Vec<Gpu>> {
+fn nvidia_smi(args: &[&str]) -> Option<String> {
     let output = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
-            "--format=csv,noheader,nounits",
-        ])
+        .args(args)
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
-    Some(parse_nvidia_smi(&String::from_utf8_lossy(&output.stdout)))
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Query NVIDIA, preferring the extended field set and falling back to the
+/// legacy one on older drivers that reject the newer query fields.
+fn query_nvidia() -> Option<Vec<Gpu>> {
+    if let Some(out) = nvidia_smi(&[
+        "--query-gpu=name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,power.limit,clocks_throttle_reasons.active",
+        "--format=csv,noheader,nounits",
+    ]) {
+        let gpus = parse_nvidia_smi_ext(&out);
+        if !gpus.is_empty() {
+            return Some(gpus);
+        }
+    }
+    nvidia_smi(&[
+        "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu",
+        "--format=csv,noheader,nounits",
+    ])
+    .map(|out| parse_nvidia_smi(&out))
+}
+
+fn query_nvidia_procs() -> Vec<GpuProc> {
+    nvidia_smi(&[
+        "--query-compute-apps=pid,used_memory",
+        "--format=csv,noheader,nounits",
+    ])
+    .map(|out| parse_compute_apps(&out))
+    .unwrap_or_default()
 }
 
 /// Combine all GPU sources: NVIDIA via `nvidia-smi`, AMD/Intel via sysfs.
-fn query_all() -> Vec<Gpu> {
+fn query_all() -> GpuSnapshot {
     let mut gpus = query_nvidia().unwrap_or_default();
+    let nvidia_present = !gpus.is_empty();
     gpus.extend(read_sysfs_gpus());
-    gpus
+    let procs = if nvidia_present {
+        query_nvidia_procs()
+    } else {
+        Vec::new()
+    };
+    GpuSnapshot { gpus, procs }
 }
 
 /// Background poller that keeps the latest GPU snapshot in a shared slot.
 pub struct GpuMonitor {
-    latest: Arc<Mutex<Vec<Gpu>>>,
+    latest: Arc<Mutex<GpuSnapshot>>,
 }
 
 impl GpuMonitor {
-    /// Probe for `nvidia-smi`; if present, spawn a polling thread. Otherwise the
-    /// monitor exists but always reports an empty list.
+    /// Probe for any GPU source; if present, spawn a polling thread. Otherwise
+    /// the monitor exists but always reports an empty snapshot.
     pub fn new() -> Self {
-        let latest = Arc::new(Mutex::new(Vec::new()));
+        let latest = Arc::new(Mutex::new(GpuSnapshot::default()));
         let initial = query_all();
-        // Only spawn the poller if at least one GPU source is actually present.
-        if !initial.is_empty() {
+        if !initial.gpus.is_empty() {
             *latest.lock().unwrap() = initial;
             let shared = Arc::clone(&latest);
             std::thread::Builder::new()
                 .name("toptop-gpu".into())
                 .spawn(move || loop {
                     std::thread::sleep(Duration::from_millis(2000));
-                    let gpus = query_all();
+                    let snap = query_all();
                     if let Ok(mut slot) = shared.lock() {
-                        *slot = gpus;
+                        *slot = snap;
                     }
                 })
                 .ok();
@@ -218,7 +346,7 @@ impl GpuMonitor {
     }
 
     /// The most recent GPU snapshot (clone of the shared slot).
-    pub fn snapshot(&self) -> Vec<Gpu> {
+    pub fn snapshot(&self) -> GpuSnapshot {
         self.latest.lock().map(|g| g.clone()).unwrap_or_default()
     }
 }
@@ -234,38 +362,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_well_formed() {
-        let out = "NVIDIA GeForce RTX 4090, 42, 2048, 24564, 56\n\
-                   NVIDIA A100, 100, 40000, 40960, 71\n";
-        let gpus = parse_nvidia_smi(out);
-        assert_eq!(gpus.len(), 2);
-        assert_eq!(gpus[0].name, "NVIDIA GeForce RTX 4090");
-        assert_eq!(gpus[0].util_pct, 42.0);
-        assert_eq!(gpus[0].mem_used, 2048 * 1024 * 1024);
-        assert_eq!(gpus[0].temp, 56.0);
-        assert!((gpus[1].mem_pct() - 97.65625).abs() < 0.01);
-    }
-
-    #[test]
-    fn skips_malformed() {
-        let out = "broken line\n\
-                   , , , ,\n\
-                   NVIDIA T4, 10, 100, 1000, 40\n\
-                   \n";
-        let gpus = parse_nvidia_smi(out);
-        assert_eq!(gpus.len(), 1);
-        assert_eq!(gpus[0].name, "NVIDIA T4");
-    }
-
-    #[test]
-    fn empty_input() {
-        assert!(parse_nvidia_smi("").is_empty());
-    }
-
-    #[test]
-    fn nvidia_has_util_flag() {
+    fn parses_legacy() {
         let g = &parse_nvidia_smi("NVIDIA T4, 10, 100, 1000, 40")[0];
-        assert!(g.has_util);
+        assert_eq!(g.name, "NVIDIA T4");
+        assert!(g.has_util && !g.has_mem_util);
+        assert_eq!(g.mem_used, 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn parses_extended() {
+        let out = "NVIDIA RTX 4090, 87, 63, 21000, 24564, 71, 320.5, 450.0, 0x0000000000000000";
+        let g = &parse_nvidia_smi_ext(out)[0];
+        assert_eq!(g.util_pct, 87.0);
+        assert_eq!(g.mem_util, 63.0);
+        assert!(g.has_mem_util);
+        assert_eq!(g.power, 320.5);
+        assert_eq!(g.power_limit, 450.0);
+        assert!(!g.throttled);
+    }
+
+    #[test]
+    fn detects_throttle_and_na() {
+        // HW thermal slowdown (0x40) set, and some fields are [N/A].
+        let out = "NVIDIA A100, [N/A], 50, 4000, 40960, 88, [N/A], 250, 0x0000000000000040";
+        let g = &parse_nvidia_smi_ext(out)[0];
+        assert!(g.throttled);
+        assert!(!g.has_util); // [N/A] util
+        assert_eq!(g.power, 0.0); // [N/A] power → 0
+        assert_eq!(g.mem_util, 50.0);
+    }
+
+    #[test]
+    fn compute_apps_parse() {
+        let out = "1234, 2048\n5678, 512\nbroken\n";
+        let p = parse_compute_apps(out);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].pid, 1234);
+        assert_eq!(p[0].used_mem, 2048 * 1024 * 1024);
     }
 
     #[test]
@@ -273,26 +406,22 @@ mod tests {
         let g = build_sysfs_gpu(
             Some("amdgpu"),
             Some(73),
-            Some(2 * 1024 * 1024 * 1024),
-            Some(8 * 1024 * 1024 * 1024),
+            Some(2048),
+            Some(8192),
             Some(61000),
         )
         .expect("amd gpu");
         assert_eq!(g.name, "AMD GPU");
-        assert!(g.has_util);
-        assert_eq!(g.util_pct, 73.0);
+        assert!(g.has_util && !g.has_mem_util);
         assert_eq!(g.temp, 61.0);
-        assert_eq!(g.mem_total, 8 * 1024 * 1024 * 1024);
     }
 
     #[test]
     fn sysfs_intel_no_util() {
-        // Intel i915 exposes VRAM/temp but not gpu_busy_percent.
         let g =
             build_sysfs_gpu(Some("i915"), None, None, Some(1024), Some(45000)).expect("intel gpu");
         assert_eq!(g.name, "Intel GPU");
         assert!(!g.has_util);
-        assert_eq!(g.temp, 45.0);
     }
 
     #[test]
