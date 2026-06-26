@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod config;
+pub mod export;
 pub mod history;
 pub mod metrics;
 pub mod theme;

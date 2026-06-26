@@ -36,6 +36,7 @@ OPTIONS:
         --no-tree        Start in flat process view
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
+        --export json    Print a machine-readable JSON snapshot and exit
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -46,6 +47,7 @@ KEYS (in-app, press ? for the full list):
 fn main() -> Result<()> {
     let mut cfg = Config::load();
     let mut snapshot = false;
+    let mut export = false;
 
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
@@ -80,11 +82,22 @@ fn main() -> Result<()> {
             "--tree" => cfg.tree = true,
             "--no-tree" => cfg.tree = false,
             "--snapshot" => snapshot = true,
+            "--export" => {
+                // An optional format argument may follow; only `json` is supported.
+                if matches!(args.peek().map(|s| s.as_str()), Some("json")) {
+                    args.next();
+                }
+                export = true;
+            }
             other => {
                 eprintln!("toptop: unknown argument '{other}' (try --help)");
                 std::process::exit(2);
             }
         }
+    }
+
+    if export {
+        return run_export(&cfg);
     }
 
     if snapshot {
@@ -97,6 +110,17 @@ fn main() -> Result<()> {
     restore_terminal(&mut terminal).ok();
     app.config().save();
     result
+}
+
+/// Machine-readable JSON snapshot — the building block for multi-host
+/// monitoring and external dashboards.
+fn run_export(cfg: &Config) -> Result<()> {
+    let mut app = App::new(cfg);
+    std::thread::sleep(Duration::from_millis(350));
+    app.on_tick();
+    println!("{}", toptop::export::to_json(&app.collector, 20));
+    io::stdout().flush().ok();
+    Ok(())
 }
 
 /// One-shot, non-interactive snapshot — handy for piping, scripts, or smoke
