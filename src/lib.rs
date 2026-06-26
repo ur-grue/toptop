@@ -4,7 +4,9 @@
 pub mod app;
 pub mod config;
 pub mod export;
+pub mod fleet;
 pub mod history;
+pub mod json;
 pub mod metrics;
 pub mod theme;
 pub mod ui;

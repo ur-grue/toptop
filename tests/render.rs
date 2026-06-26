@@ -206,6 +206,65 @@ fn interaction_flow_is_stable() {
 }
 
 #[test]
+fn fleet_view_renders() {
+    use toptop::fleet::{FleetApp, HostState, HostStatus, HostSummary, ServerLine};
+
+    // Empty host list spawns no monitor threads — safe to construct in a test.
+    let mut app = FleetApp::new(vec![], "x".into(), 0);
+    app.hosts = vec![
+        HostState {
+            name: "gpu-node-1".into(),
+            status: HostStatus::Online,
+            latency_ms: Some(42),
+            summary: Some(HostSummary {
+                hostname: "gpu-node-1".into(),
+                os: "Linux (Ubuntu 24.04)".into(),
+                cpu_usage: 37.5,
+                mem_used: 34_359_738_368,
+                mem_total: 68_719_476_736,
+                load: (4.2, 3.1, 2.5),
+                uptime: 3600,
+                tasks: 420,
+                running: 3,
+                gpu_count: 2,
+                gpu_util: Some(91.0),
+                vram_used: 44_023_414_784,
+                vram_total: 171_798_691_840,
+                gpu_power: 400.0,
+                total_tps: 58.3,
+                servers: vec![ServerLine {
+                    runtime: "vLLM".into(),
+                    model: "meta-llama/Llama-3-70B".into(),
+                    gen_tps: Some(58.3),
+                    kv_pct: Some(72.0),
+                }],
+            }),
+        },
+        HostState {
+            name: "offline-box".into(),
+            status: HostStatus::Error("Connection refused".into()),
+            latency_ms: Some(6000),
+            summary: None,
+        },
+    ];
+
+    for (w, h) in [(1, 1), (40, 12), (100, 30), (200, 50)] {
+        let backend = TestBackend::new(w, h);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|f| ui::fleet::draw(f, &app))
+            .expect("fleet draw must not panic");
+    }
+
+    // Navigation + theme cycling.
+    app.on_key(KeyCode::Down);
+    assert_eq!(app.selected, 1);
+    app.on_key(KeyCode::Char('p'));
+    app.on_key(KeyCode::Char('q'));
+    assert!(app.should_quit);
+}
+
+#[test]
 fn quit_keys_work() {
     let mut app = App::new(&Config::default());
     app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));

@@ -1,5 +1,6 @@
 //! All terminal rendering. Pure functions of `(&mut Frame, &mut App)`.
 
+pub mod fleet;
 pub mod graph;
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};

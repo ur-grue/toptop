@@ -18,6 +18,7 @@ use ratatui::Terminal;
 
 use toptop::app::App;
 use toptop::config::Config;
+use toptop::fleet::FleetApp;
 use toptop::theme;
 use toptop::ui;
 
@@ -35,6 +36,9 @@ OPTIONS:
         --tree           Start in process-tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local-LLM GPU view on launch
+        --remote <HOSTS> Multi-host fleet view; comma-separated SSH hosts
+                         (use 'local' for this machine)
+        --remote-cmd <C> Command run on each remote (default: toptop --export json)
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export json    Print a machine-readable JSON snapshot and exit
@@ -50,6 +54,8 @@ fn main() -> Result<()> {
     let mut snapshot = false;
     let mut export = false;
     let mut start_ai = false;
+    let mut remote_hosts: Vec<String> = Vec::new();
+    let mut remote_cmd = "toptop --export json".to_string();
 
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
@@ -84,6 +90,19 @@ fn main() -> Result<()> {
             "--tree" => cfg.tree = true,
             "--no-tree" => cfg.tree = false,
             "--ai" => start_ai = true,
+            "--remote" => {
+                let list = args
+                    .next()
+                    .context("--remote requires a comma-separated host list")?;
+                remote_hosts = list
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+            }
+            "--remote-cmd" => {
+                remote_cmd = args.next().context("--remote-cmd requires a command")?;
+            }
             "--snapshot" => snapshot = true,
             "--export" => {
                 // An optional format argument may follow; only `json` is supported.
@@ -105,6 +124,14 @@ fn main() -> Result<()> {
 
     if snapshot {
         return run_snapshot(&cfg);
+    }
+
+    if !remote_hosts.is_empty() {
+        let mut fleet = FleetApp::new(remote_hosts, remote_cmd, cfg.theme_idx);
+        let mut terminal = setup_terminal().context("failed to initialize terminal")?;
+        let result = run_fleet(&mut terminal, &mut fleet);
+        restore_terminal(&mut terminal).ok();
+        return result;
     }
 
     let mut app = App::new(&cfg);
@@ -236,6 +263,32 @@ fn run(terminal: &mut Tui, app: &mut App) -> Result<()> {
             last_tick = Instant::now();
         }
 
+        if app.should_quit {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn run_fleet(terminal: &mut Tui, app: &mut FleetApp) -> Result<()> {
+    let mut last_tick = Instant::now();
+    loop {
+        terminal.draw(|f| ui::fleet::draw(f, app))?;
+        let timeout = app
+            .tick
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or(Duration::ZERO);
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    app.on_key(key.code);
+                }
+            }
+        }
+        if last_tick.elapsed() >= app.tick {
+            app.on_tick();
+            last_tick = Instant::now();
+        }
         if app.should_quit {
             break;
         }
