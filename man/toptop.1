@@ -1,0 +1,103 @@
+.TH TOPTOP 1 "2026" "toptop 1.0.0" "User Commands"
+.SH NAME
+toptop \- a gorgeous, feature-rich terminal system monitor
+.SH SYNOPSIS
+.B toptop
+.RI [ OPTIONS ]
+.SH DESCRIPTION
+.B toptop
+is an htop/btop-class terminal system monitor written in Rust. It displays
+CPU (global and per-core), memory and swap, per-interface network throughput,
+per-mount disk usage and I/O, GPU (NVIDIA, AMD, Intel), temperature sensors and
+battery, alongside an interactive process table with tree view, live filtering,
+per-process I/O rates, a signal menu, and a network-connections inspector.
+.PP
+Graphs are drawn with high-resolution braille cells and meters use truecolor
+gradients. Five themes are included and the layout adapts from a wide desktop
+terminal down to a tiny pane.
+.SH OPTIONS
+.TP
+.BR \-t ", " \-\-tick " " \fIMS\fR
+Refresh interval in milliseconds (100\(en60000).
+.TP
+.BR \-\-theme " " \fINAME\fR
+Color theme: \fIgruvbox\fR, \fInord\fR, \fIdracula\fR, \fItokyonight\fR, or \fImatrix\fR.
+.TP
+.B \-\-tree
+Start in process-tree view.
+.TP
+.B \-\-no\-tree
+Start in flat process view.
+.TP
+.B \-\-list\-themes
+Print available themes and exit.
+.TP
+.B \-\-snapshot
+Print a one-shot text snapshot and exit (no TUI).
+.TP
+.BR \-h ", " \-\-help
+Show help and exit.
+.TP
+.BR \-V ", " \-\-version
+Show version and exit.
+.SH KEYBINDINGS
+.TP
+.BR \[ua] / \[da] ", " k / j
+Move selection.
+.TP
+.BR PgUp / PgDn
+Page up / down.
+.TP
+.BR Home / End ", " g / G
+Jump to first / last.
+.TP
+.B Enter
+Toggle the process detail view.
+.TP
+.B n
+Open the network-connections inspector.
+.TP
+.B s
+Cycle the sort column; \fBi\fR inverts the order.
+.TP
+.B t
+Toggle the process tree.
+.TP
+.B e
+Toggle per-core CPU meters.
+.TP
+.B L
+Cycle the layout preset (full / cpu / process).
+.TP
+.B /
+Filter processes as you type.
+.TP
+.BR K / F9
+Open the signal menu; \fBDel\fR sends SIGTERM, \fBx\fR sends SIGKILL.
+.TP
+.BR p / P
+Next / previous theme.
+.TP
+.BR + / \-
+Faster / slower refresh.
+.TP
+.B space
+Pause / resume.
+.TP
+.BR ? / F1
+Toggle the help overlay.
+.TP
+.BR q ", " Ctrl\-C
+Quit.
+.SH FILES
+.TP
+.I ~/.config/toptop/config.conf
+Persisted settings (theme, refresh interval, tree mode, layout). Honors
+.BR XDG_CONFIG_HOME .
+.SH EXIT STATUS
+Returns 0 on success and 2 on an invalid command-line argument.
+.SH SEE ALSO
+.BR htop (1),
+.BR top (1)
+.SH AUTHOR
+The toptop authors. Source: https://github.com/ur-grue/toptop

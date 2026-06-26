@@ -73,19 +73,42 @@
 
 ## 🚀 Install
 
-Requires a Rust toolchain (1.82+).
+**From source** (requires a Rust toolchain, 1.82+):
 
 ```bash
 git clone https://github.com/ur-grue/toptop && cd toptop
 cargo build --release
-./target/release/toptop
+./target/release/toptop          # or: cargo install --path .
 ```
 
-Or run directly during development:
+**Homebrew** (via tap):
 
 ```bash
-cargo run --release
+brew install ur-grue/tap/toptop
+# before a tagged release is published, install the tip of main:
+brew install --HEAD ur-grue/tap/toptop
 ```
+
+**Debian / Ubuntu** (`.deb`):
+
+```bash
+# grab toptop_*_amd64.deb from the GitHub Releases page, then:
+sudo apt install ./toptop_1.0.0-1_amd64.deb
+# build it yourself from a checkout:
+cargo install cargo-deb && cargo deb     # writes target/debian/toptop_*.deb
+```
+
+> **Status:** `brew` and `apt` install from a published tap / release. Pushing a
+> `v*` tag triggers [the release workflow](.github/workflows/release.yml), which
+> builds the binary tarball and `.deb` and attaches them to the GitHub Release;
+> the [Homebrew formula](packaging/homebrew/toptop.rb) is ready to drop into a tap.
+
+### Platform support
+
+`toptop` is **Linux-first**. The cross-platform core — CPU, memory, network,
+disk and the process table (via `sysinfo`) — also builds and runs on macOS and
+BSD; the Linux-specific panels (GPU via `sysfs`, battery, and the `/proc`-based
+connections inspector) simply stay empty there rather than failing.
 
 ## 🎛️ Usage
 
