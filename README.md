@@ -1,24 +1,19 @@
 <div align="center">
 
-```
- ████████  ██████  ██████  ████████  ██████  ██████
-    ██    ██    ██ ██   ██    ██    ██    ██ ██   ██
-    ██    ██    ██ ██████     ██    ██    ██ ██████
-    ██    ██    ██ ██         ██    ██    ██ ██
-    ██     ██████  ██         ██     ██████  ██
-```
+<img src="assets/banner.svg" alt="toptop — system monitor" width="100%">
 
-### a gorgeous, feature‑rich terminal system monitor
+<br>
 
-**htop power · btop looks · written in Rust · one tiny binary**
+**htop power · btop looks · a local‑LLM brain · written in Rust · one tiny binary**
 
 [![CI](https://github.com/ur-grue/toptop/actions/workflows/ci.yml/badge.svg)](https://github.com/ur-grue/toptop/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
+![Tests](https://img.shields.io/badge/tests-61%20green-success)
 
-[Features](#-features) · [Install](#-install) · [Usage](#-usage) · [Keys](#-keybindings) · [Themes](#-themes) · [Architecture](#-architecture)
+[Features](#-features) · [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Install](#-install) · [Keys](#-keybindings) · [Themes](#-themes)
 
 </div>
 
@@ -41,13 +36,45 @@
 │    543 root        0.4   0.4  59M    ·        12:00   S environment-manager task-run       │
 │  19201 you         2.7   0.0  12M    ·        00:16   R toptop                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────╯
-?:help Enter:detail n:net s:sort t:tree /:filter K:signal L:layout q:quit
+?:help Enter:detail a:ai n:net s:sort t:tree /:filter K:signal L:layout q:quit
 ```
 
 > A fast, beautiful, at‑a‑glance view of your machine — high‑resolution braille graphs,
-> smooth truecolor gradient meters, an interactive process table with tree view and a
-> one‑keystroke signal menu, GPU + sensors, a live network‑connections inspector, and five
-> hand‑tuned themes — all in a single **~1 MB binary with zero runtime dependencies**.
+> truecolor gradient meters, an interactive process table, GPU + sensors, a network‑connections
+> inspector, a **local‑LLM dashboard** (tokens/sec, VRAM, throttle) and a **multi‑host fleet
+> view** — all in a single **~1 MB binary with zero runtime dependencies**.
+
+<details>
+<summary><b>🤖 AI / local‑LLM view</b> &nbsp;(<code>a</code>) — the metrics nvidia‑smi can't see</summary>
+
+```text
+╭ AI · local-LLM GPU view · Esc/a to close ───────────────────────────────────────╮
+│gpu0  NVIDIA GeForce RTX 4090   290/450W  72°C                                     │
+│  compute   █████████▎░░░░░░░░░░░░░░░░░░░░  31%                                    │
+│  mem b/w   ███████████████████████▍░░░░░░  78%                                    │
+│  vram      ███████████████████████████▌░░ 22.0 GiB / 24.0 GiB                     │
+│             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)            │
+│Inference servers (auto-discovered)                                               │
+│  vLLM :8000  meta-llama/Llama-3-8B                                                │
+│    83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms         │
+╰──────────────────────────────────────────────────────────────────────────────────╯
+```
+</details>
+
+<details>
+<summary><b>🛰️ Multi‑host fleet view</b> &nbsp;(<code>--remote</code>) — monitor a whole inference cluster</summary>
+
+```text
+▟▛ toptop fleet  4 hosts · 3 online  · 6 GPUs · Σ vram 74G/184G  · Σ 154 tok/s    10:52:28
+╭ hosts ──────────────────────────────────────────────────────────────────────────────────╮
+│HOST          STATUS       CPU%  MEM   LOAD   GPU%  VRAM   TOK/S  TASKS  UP                 │
+│gpu-node-1    ● online     37    53    4.6    91    41G    58     512    1d 00:00:00        │
+│gpu-node-2    ● online     88    91    11.0   22    12G    12     512    1d 00:00:00        │
+│inference-3   ● online     12    28    1.5    76    21G    83     512    1d 00:00:00        │
+│offline-box   ✕ Connection refused                                                         │
+╰───────────────────────────────────────────────────────────────────────────────────────────╯
+```
+</details>
 
 ## ✨ Features
 
@@ -70,9 +97,10 @@
 | 🕐 **Live header** | wall clock, uptime, load average, task counts, battery |
 | 📐 **Adaptive layout** | reflows cleanly from a 250‑column desktop down to a tiny pane |
 | 🪶 **Tiny & safe** | ~1 MB binary, no runtime deps, restores your terminal even on panic |
-| 🤖 **Headless mode** | `--snapshot` prints a one‑shot textual report for scripts & dashboards |
+| 🛰️ **Multi‑host fleet** | `--remote h1,h2,…` aggregates a cluster over SSH — Σ tokens/sec, Σ VRAM, per‑host status |
+| 🤖 **Headless / export** | `--snapshot` (text) and `--export json` (machine‑readable, incl. server tokens/sec) |
 
-## 🤖 For local‑LLM / AI engineers
+## 🤖 For AI engineers
 
 Press **`a`** (or launch with **`--ai`**) for a view built around the question
 *"why is my model slow?"* — the metrics a bare `nvidia-smi` doesn't make obvious:
@@ -118,7 +146,33 @@ Inference servers (auto-discovered)
 
 Pipe all of it anywhere with `toptop --export json` (GPU bandwidth/power/throttle,
 GPU processes, **and** discovered servers with tokens/sec) — the building block
-for multi‑host fleet monitoring of an inference cluster.
+for the fleet view below.
+
+## 🛰️ Multi-host fleet view
+
+Point toptop at a list of machines and it becomes a **local‑cluster dashboard** —
+each host is polled over SSH (it just runs `toptop --export json` there), parsed,
+and aggregated:
+
+```bash
+toptop --remote gpu-node-1,gpu-node-2,inference-3      # SSH hosts (and 'local')
+toptop --remote-cmd "/opt/bin/toptop --export json" --remote box-a,box-b
+```
+
+```text
+▟▛ toptop fleet  4 hosts · 3 online  · 6 GPUs · Σ vram 74G/184G  · Σ 154 tok/s
+╭ hosts ──────────────────────────────────────────────────────────────────────────╮
+│HOST          STATUS     CPU%  MEM   LOAD   GPU%  VRAM   TOK/S  TASKS  UP           │
+│gpu-node-1    ● online   37    53    4.6    91    41G    58     512    1d 00:00:00  │
+│gpu-node-2    ● online   88    91    11.0   22    12G    12     512    1d 00:00:00  │
+│inference-3   ● online   12    28    1.5    76    21G    83     512    1d 00:00:00  │
+│offline-box   ✕ Connection refused                                                 │
+╰────────────────────────────────────────────────────────────────────────────────────╯
+```
+
+Aggregate **Σ tokens/sec** and **Σ VRAM** across the fleet; select a host to see its
+CPU/MEM/VRAM meters and per‑server tokens/sec. Offline hosts show the SSH error inline
+and keep retrying. No agent, no daemon, no open ports — just SSH and the single binary.
 
 ## 🚀 Install
 
@@ -170,6 +224,8 @@ OPTIONS:
         --tree           Start in process‑tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local‑LLM GPU view on launch
+        --remote <HOSTS> Multi‑host fleet view (comma‑separated SSH hosts; 'local')
+        --remote-cmd <C> Command run on each remote (default: toptop --export json)
         --list-themes    Print available themes and exit
         --snapshot       Print a one‑shot text snapshot and exit (no TUI)
         --export json    Print a machine‑readable JSON snapshot and exit
@@ -210,10 +266,13 @@ emitted as true 24‑bit RGB so meters and graphs interpolate smoothly on any mo
 |--------|----------------|
 | `metrics` | `sysinfo` handles + time‑series histories; CPU/mem/net/disk/proc data |
 | `metrics::gpu` | NVIDIA (`nvidia-smi`) + AMD/Intel (`sysfs`) GPU polling, off the UI thread |
-| `metrics::netconn` | `/proc/net/*` parsing and socket→PID mapping for the connections view |
+| `metrics::ai` | local‑AI workload taxonomy (serving vs. training runtimes) |
+| `metrics::infer` | inference‑server discovery + Prometheus/Ollama scraping (tokens/sec) |
+| `metrics::netconn` | `/proc/net/*` parsing and socket→PID mapping |
+| `json` + `fleet` | dependency‑free JSON parser + multi‑host SSH aggregation |
 | `history` | fixed‑capacity ring buffer feeding the graphs |
 | `theme` | themes and the truecolor gradient engine |
-| `ui` + `ui::graph` | all rendering; braille‑graph and gradient‑meter primitives |
+| `ui` + `ui::graph` + `ui::fleet` | all rendering; braille‑graph and gradient‑meter primitives |
 | `app` | state machine: input, sort/filter/tree, selection, signals, layout |
 | `config` | dependency‑free config with optional persistence |
 
@@ -223,7 +282,9 @@ emitted as true 24‑bit RGB so meters and graphs interpolate smoothly on any mo
 cargo test                          # unit + headless render integration tests
 cargo clippy --all-targets          # lint (CI runs with -D warnings)
 cargo run --example preview 120 40  # render one frame as plain text
+cargo run --example fleet_preview   # render the fleet dashboard with sample hosts
 cargo run -- --snapshot             # one-shot textual snapshot
+python3 scripts/make_banner.py      # regenerate the pixel-art banner (assets/banner.svg)
 ```
 
 The render tests drive the **full UI** through ratatui's headless `TestBackend` across
