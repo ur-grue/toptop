@@ -160,6 +160,30 @@ pub fn to_json(c: &Collector, top_procs: usize) -> String {
         .collect();
     s.push_str(&format!("\"gpu_procs\":[{}],", gpu_procs.join(",")));
 
+    // Auto-discovered inference servers (tokens/sec, KV cache, queue, …).
+    let optnum = |v: Option<f64>| v.map(num).unwrap_or_else(|| "null".to_string());
+    let servers: Vec<String> = c
+        .servers
+        .iter()
+        .map(|sv| {
+            format!(
+                "{{\"runtime\":\"{}\",\"pid\":{},\"port\":{},\"model\":\"{}\",\"gen_tps\":{},\"prompt_tps\":{},\"running\":{},\"waiting\":{},\"kv_pct\":{},\"ttft_ms\":{},\"gpu_offload_pct\":{}}}",
+                esc(sv.runtime),
+                sv.pid,
+                sv.port,
+                esc(&sv.model),
+                optnum(sv.gen_tps),
+                optnum(sv.prompt_tps),
+                optnum(sv.running),
+                optnum(sv.waiting),
+                optnum(sv.kv_pct),
+                optnum(sv.ttft_ms),
+                optnum(sv.gpu_offload_pct),
+            )
+        })
+        .collect();
+    s.push_str(&format!("\"servers\":[{}],", servers.join(",")));
+
     // sensors
     let sensors: Vec<String> = c
         .sensors
@@ -247,6 +271,8 @@ mod tests {
             "\"gpus\"",
             "\"procs\"",
             "\"battery\"",
+            "\"servers\"",
+            "\"gpu_procs\"",
         ] {
             assert!(json.contains(key), "missing {key}");
         }

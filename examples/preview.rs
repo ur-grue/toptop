@@ -26,7 +26,36 @@ fn main() {
             app.show_conn = true;
             app.connections = app.collector.connections();
         }
-        "ai" => app.show_ai = true,
+        "ai" => {
+            app.show_ai = true;
+            // Inject sample data so the populated layout is visible without a GPU.
+            app.collector.gpus = vec![toptop::metrics::gpu::Gpu {
+                name: "NVIDIA GeForce RTX 4090".into(),
+                util_pct: 31.0,
+                has_util: true,
+                mem_util: 78.0,
+                has_mem_util: true,
+                mem_used: 22 * 1024 * 1024 * 1024,
+                mem_total: 24 * 1024 * 1024 * 1024,
+                temp: 72.0,
+                power: 290.0,
+                power_limit: 450.0,
+                throttled: false,
+            }];
+            app.collector.servers = vec![toptop::metrics::ServerStats {
+                runtime: "vLLM",
+                pid: 4242,
+                port: 8000,
+                model: "meta-llama/Llama-3-8B".into(),
+                gen_tps: Some(83.4),
+                prompt_tps: Some(1240.0),
+                running: Some(2.0),
+                waiting: Some(5.0),
+                kv_pct: Some(64.0),
+                ttft_ms: Some(180.0),
+                gpu_offload_pct: None,
+            }];
+        }
         "detail" => app.show_detail = true,
         "signal" => {
             use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

@@ -109,6 +109,20 @@ fn ai_view_renders() {
         pid: app.collector.procs.first().map(|p| p.pid).unwrap_or(1),
         used_mem: 22 * 1024 * 1024 * 1024,
     }];
+    // A discovered inference server with live tokens/sec.
+    app.collector.servers = vec![toptop::metrics::ServerStats {
+        runtime: "vLLM",
+        pid: 4242,
+        port: 8000,
+        model: "meta-llama/Llama-3-8B".into(),
+        gen_tps: Some(83.4),
+        prompt_tps: Some(1200.0),
+        running: Some(2.0),
+        waiting: Some(5.0),
+        kv_pct: Some(64.0),
+        ttft_ms: Some(180.0),
+        gpu_offload_pct: None,
+    }];
     render_at(&mut app, 100, 30);
     render_at(&mut app, 60, 14); // cramped
     app.on_key(key(KeyCode::Char('a')));

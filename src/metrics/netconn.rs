@@ -159,6 +159,42 @@ fn inode_to_pid() -> HashMap<u64, (u32, String)> {
     map
 }
 
+/// Local TCP port of a `/proc/net/tcp{,6}` line, if it is in LISTEN state.
+fn listen_port(line: &str) -> Option<u16> {
+    let f: Vec<&str> = line.split_whitespace().collect();
+    if f.len() < 4 || f[3] != "0A" {
+        return None;
+    }
+    let (_, port) = f[1].split_once(':')?;
+    u16::from_str_radix(port, 16).ok()
+}
+
+/// Enumerate listening TCP sockets joined to their owning PID, as `(port, pid)`.
+/// Used to auto-discover local inference servers to scrape.
+pub fn listening_sockets() -> Vec<(u16, u32)> {
+    let inodes = inode_to_pid();
+    let mut out = Vec::new();
+    for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        for line in contents.lines().skip(1) {
+            let Some(port) = listen_port(line) else {
+                continue;
+            };
+            // The inode is column 9 (same layout as parse_net_line).
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let Some(inode) = f.get(9).and_then(|s| s.parse::<u64>().ok()) else {
+                continue;
+            };
+            if let Some((pid, _)) = inodes.get(&inode) {
+                out.push((port, *pid));
+            }
+        }
+    }
+    out
+}
+
 /// Enumerate all current TCP/UDP connections, joined to owning processes.
 pub fn collect() -> Vec<Connection> {
     let sources: &[(&'static str, &str, bool, bool)] = &[

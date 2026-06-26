@@ -13,10 +13,13 @@ use sysinfo::{
 
 pub mod ai;
 pub mod gpu;
+pub mod infer;
 pub mod netconn;
 
 use crate::history::History;
 use gpu::{Gpu, GpuMonitor, GpuProc};
+use infer::InferenceMonitor;
+pub use infer::ServerStats;
 pub use netconn::Connection;
 
 /// Static-ish information about the host, captured once at startup.
@@ -132,6 +135,7 @@ pub struct Collector {
     refresh_kind: RefreshKind,
     proc_refresh: ProcessRefreshKind,
     gpu_monitor: GpuMonitor,
+    infer_monitor: InferenceMonitor,
     /// Per-PID cumulative (read, written) bytes from the previous tick, used to
     /// derive per-process I/O rates.
     prev_proc_io: std::collections::HashMap<u32, (u64, u64)>,
@@ -154,6 +158,8 @@ pub struct Collector {
     pub gpus: Vec<Gpu>,
     /// Processes holding GPU memory (NVIDIA only), for the AI/LLM view.
     pub gpu_procs: Vec<GpuProc>,
+    /// Auto-discovered local inference servers (tokens/sec, KV cache, …).
+    pub servers: Vec<ServerStats>,
     pub battery: Option<Battery>,
     pub uptime: u64,
 }
@@ -214,6 +220,7 @@ impl Collector {
             refresh_kind,
             proc_refresh,
             gpu_monitor: GpuMonitor::new(),
+            infer_monitor: InferenceMonitor::new(),
             prev_proc_io: std::collections::HashMap::new(),
             last_instant: None,
             history_len,
@@ -236,6 +243,7 @@ impl Collector {
             sensors: Vec::new(),
             gpus: Vec::new(),
             gpu_procs: Vec::new(),
+            servers: Vec::new(),
             battery: None,
             uptime: 0,
         };
@@ -271,6 +279,7 @@ impl Collector {
         let gpu_snap = self.gpu_monitor.snapshot();
         self.gpus = gpu_snap.gpus;
         self.gpu_procs = gpu_snap.procs;
+        self.servers = self.infer_monitor.snapshot();
         self.battery = read_battery();
     }
 

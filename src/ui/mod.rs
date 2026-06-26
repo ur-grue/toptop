@@ -1072,13 +1072,128 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(Span::raw("")));
     }
 
-    // Detected local-inference runtimes (ollama, llama.cpp, vLLM, …), joined to
-    // CPU/RAM and — where the PID matches a GPU compute process — VRAM.
-    let mut inference: Vec<(&'static str, &crate::metrics::ProcInfo, u64)> = c
+    // Multi-GPU aggregate + sharding-imbalance hint.
+    let total_power: f32 = c.gpus.iter().map(|g| g.power).sum();
+    if c.gpus.len() > 1 {
+        let used: u64 = c.gpus.iter().map(|g| g.mem_used).sum();
+        let total: u64 = c.gpus.iter().map(|g| g.mem_total).sum();
+        let utils: Vec<f32> = c
+            .gpus
+            .iter()
+            .filter(|g| g.has_util)
+            .map(|g| g.util_pct)
+            .collect();
+        let mut spans = vec![
+            Span::styled(
+                format!("Σ {} GPUs  ", c.gpus.len()),
+                Style::default().fg(theme.accent2.color()),
+            ),
+            Span::styled(
+                format!("vram {} / {}", human_bytes(used), human_bytes(total)),
+                dim(theme),
+            ),
+        ];
+        if total_power > 0.0 {
+            spans.push(Span::styled(format!("  {:.0} W", total_power), dim(theme)));
+        }
+        let spread = match (
+            utils.iter().cloned().reduce(f32::min),
+            utils.iter().cloned().reduce(f32::max),
+        ) {
+            (Some(mn), Some(mx)) => mx - mn,
+            _ => 0.0,
+        };
+        if spread >= 40.0 {
+            spans.push(Span::styled(
+                "  ⚠ imbalance — uneven sharding?",
+                Style::default().fg(theme.grad(0.7)),
+            ));
+        }
+        lines.push(Line::from(spans));
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    // Auto-discovered inference servers — the app-level numbers (tokens/sec,
+    // KV-cache pressure, queue depth) that nvidia-smi can't see.
+    if !c.servers.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Inference servers (auto-discovered)",
+            Style::default()
+                .fg(theme.accent.color())
+                .add_modifier(Modifier::BOLD),
+        )));
+        let cap = inner.height as usize;
+        for sv in &c.servers {
+            if lines.len() + 1 >= cap {
+                break;
+            }
+            let mut head = vec![Span::styled(
+                format!("  {} :{}", sv.runtime, sv.port),
+                Style::default()
+                    .fg(theme.accent2.color())
+                    .add_modifier(Modifier::BOLD),
+            )];
+            if !sv.model.is_empty() {
+                head.push(Span::styled(
+                    format!("  {}", truncate(&sv.model, 30)),
+                    dim(theme),
+                ));
+            }
+            if let Some(off) = sv.gpu_offload_pct {
+                head.push(Span::styled(
+                    format!("  {:.0}% on GPU", off),
+                    Style::default().fg(theme.grad(off as f32 / 100.0)),
+                ));
+            }
+            lines.push(Line::from(head));
+
+            let mut stat = vec![Span::styled("    ", dim(theme))];
+            if let Some(g) = sv.gen_tps {
+                stat.push(Span::styled(
+                    format!("{:.1} tok/s", g),
+                    Style::default()
+                        .fg(theme.grad(0.0))
+                        .add_modifier(Modifier::BOLD),
+                ));
+                if total_power > 0.0 {
+                    stat.push(Span::styled(
+                        format!(" ({:.2} tok/s/W)", g as f32 / total_power),
+                        dim(theme),
+                    ));
+                }
+            }
+            if let Some(p) = sv.prompt_tps {
+                stat.push(Span::styled(format!("  prefill {:.0}/s", p), dim(theme)));
+            }
+            if let Some(k) = sv.kv_pct {
+                stat.push(Span::styled(
+                    format!("  kv {:.0}%", k),
+                    Style::default().fg(theme.grad((k / 100.0) as f32)),
+                ));
+            }
+            if let Some(r) = sv.running {
+                stat.push(Span::styled(
+                    format!("  req {:.0}/{:.0}", r, sv.waiting.unwrap_or(0.0)),
+                    dim(theme),
+                ));
+            }
+            if let Some(t) = sv.ttft_ms {
+                stat.push(Span::styled(format!("  ttft {:.0}ms", t), dim(theme)));
+            }
+            if stat.len() > 1 {
+                lines.push(Line::from(stat));
+            }
+        }
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    // Detected AI workloads (serving + training), joined to CPU/RAM and — where
+    // the PID matches a GPU compute process — VRAM.
+    let mut workloads: Vec<(crate::metrics::ai::Runtime, &crate::metrics::ProcInfo, u64)> = c
         .procs
         .iter()
         .filter_map(|p| {
-            crate::metrics::ai::inference_runtime(&p.name, &p.cmd).map(|rt| {
+            crate::metrics::ai::detect_runtime(&p.name, &p.cmd).map(|rt| {
                 let vram = c
                     .gpu_procs
                     .iter()
@@ -1089,34 +1204,44 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
             })
         })
         .collect();
-    if !inference.is_empty() {
-        inference.sort_by(|a, b| {
+    if !workloads.is_empty() {
+        workloads.sort_by(|a, b| {
             b.1.cpu
                 .partial_cmp(&a.1.cpu)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         lines.push(Line::from(Span::styled(
-            "Inference runtimes",
+            "AI workloads",
             Style::default()
                 .fg(theme.accent.color())
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
             format!(
-                "  {:<11} {:>7} {:>5} {:>9} {:>9}",
-                "RUNTIME", "PID", "CPU%", "RAM", "VRAM"
+                "  {:<13} {:<6} {:>7} {:>5} {:>9} {:>9}",
+                "RUNTIME", "TYPE", "PID", "CPU%", "RAM", "VRAM"
             ),
             dim(theme),
         )));
         let cap = inner.height as usize;
-        for (rt, p, vram) in &inference {
+        for (rt, p, vram) in &workloads {
             if lines.len() >= cap {
                 break;
             }
-            lines.push(Line::from(Span::styled(
+            let kind = match rt.kind {
+                crate::metrics::ai::AiKind::Serving => "serve",
+                crate::metrics::ai::AiKind::Training => "train",
+            };
+            // A training process pinning a CPU while its GPU sits idle is the
+            // classic data-loader bottleneck — flag it.
+            let dataloader_bound = rt.kind == crate::metrics::ai::AiKind::Training
+                && p.cpu > 95.0
+                && c.gpus.iter().any(|g| g.has_util && g.util_pct < 35.0);
+            let mut spans = vec![Span::styled(
                 format!(
-                    "  {:<11} {:>7} {:>5.1} {:>9} {:>9}",
-                    rt,
+                    "  {:<13} {:<6} {:>7} {:>5.1} {:>9} {:>9}",
+                    truncate(rt.label, 13),
+                    kind,
                     p.pid,
                     p.cpu,
                     human_bytes(p.mem_bytes),
@@ -1127,7 +1252,14 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                     }
                 ),
                 Style::default().fg(theme.fg.color()),
-            )));
+            )];
+            if dataloader_bound {
+                spans.push(Span::styled(
+                    "  ⚠ dataloader-bound?",
+                    Style::default().fg(theme.grad(0.7)),
+                ));
+            }
+            lines.push(Line::from(spans));
         }
         lines.push(Line::from(Span::raw("")));
     }
