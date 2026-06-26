@@ -15,11 +15,21 @@ fn main() {
     let w: u16 = args.next().and_then(|s| s.parse().ok()).unwrap_or(120);
     let h: u16 = args.next().and_then(|s| s.parse().ok()).unwrap_or(40);
 
+    let overlay = std::env::args().nth(3).unwrap_or_default();
     let mut app = App::new(&Config::default());
     // Take a couple of samples so meters and graphs have data.
     std::thread::sleep(std::time::Duration::from_millis(300));
     app.on_tick();
     app.on_tick();
+    match overlay.as_str() {
+        "detail" => app.show_detail = true,
+        "signal" => {
+            use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+            app.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::empty()));
+        }
+        "help" => app.show_help = true,
+        _ => {}
+    }
 
     let backend = TestBackend::new(w, h);
     let mut terminal = Terminal::new(backend).expect("terminal");

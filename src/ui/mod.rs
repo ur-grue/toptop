@@ -36,6 +36,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     render_body(f, chunks[1], app);
     render_footer(f, chunks[2], app);
 
+    if app.show_detail {
+        render_detail(f, area, app);
+    }
+    if let Some(idx) = app.signal_menu {
+        render_signal_menu(f, area, theme, idx, app);
+    }
     if app.show_help {
         render_help(f, area, theme);
     }
@@ -107,6 +113,18 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
             dim(theme),
         ),
     ];
+    if let Some(bat) = &c.battery {
+        let t = (bat.percent / 100.0).clamp(0.0, 1.0);
+        let glyph = if bat.status.eq_ignore_ascii_case("charging") {
+            "⚡"
+        } else {
+            "🔋"
+        };
+        spans.push(Span::styled(
+            format!("  {}{:.0}%", glyph, bat.percent),
+            Style::default().fg(theme.grad(t)),
+        ));
+    }
     if app.paused {
         spans.push(Span::styled(
             "  ⏸ PAUSED",
@@ -115,7 +133,21 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+
+    // Live clock, right-aligned on the same row.
+    let clock = chrono::Local::now().format("%H:%M:%S").to_string();
+    let left = Paragraph::new(Line::from(spans));
+    f.render_widget(left, area);
+    let clock_span = Span::styled(
+        clock,
+        Style::default()
+            .fg(theme.accent2.color())
+            .add_modifier(Modifier::BOLD),
+    );
+    f.render_widget(
+        Paragraph::new(Line::from(clock_span)).alignment(Alignment::Right),
+        area,
+    );
 }
 
 // ── Body layout ──────────────────────────────────────────────────────────────
@@ -657,12 +689,12 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     let mut spans = Vec::new();
     for (k, d) in [
         ("?", "help"),
+        ("Enter", "detail"),
         ("s", "sort"),
         ("t", "tree"),
         ("/", "filter"),
-        ("K", "kill"),
+        ("K", "signal"),
         ("p", "theme"),
-        ("space", "pause"),
         ("q", "quit"),
     ] {
         spans.extend(hint(k, d, theme));
@@ -686,8 +718,96 @@ fn centered(area: Rect, width: u16, height: u16) -> Rect {
     }
 }
 
+fn render_detail(f: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme();
+    let Some(p) = app.selected_proc() else {
+        return;
+    };
+    let rect = centered(area, 72, 18);
+    f.render_widget(Clear, rect);
+    let block = panel(&format!("process · {} ({})", truncate(&p.name, 28), p.pid), theme);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    if inner.width == 0 {
+        return;
+    }
+    let wrap = inner.width.saturating_sub(14) as usize;
+
+    let started = chrono::DateTime::from_timestamp(p.start_time as i64, 0)
+        .map(|dt| {
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| "—".into());
+
+    let row = |label: &'static str, value: String, color| -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("{:<11}", label), dim(theme)),
+            Span::styled(value, Style::default().fg(color)),
+        ])
+    };
+
+    let cpu = clamp_pct(p.cpu);
+    let lines = vec![
+        row("PID / PPID", format!("{} / {}", p.pid, p.ppid.map(|v| v.to_string()).unwrap_or_else(|| "—".into())), theme.fg.color()),
+        row("User", p.user.clone(), theme.accent2.color()),
+        row("State", format!("{} ({})", p.status_long, p.status), theme.fg.color()),
+        row("Threads", p.threads.to_string(), theme.fg.color()),
+        row("CPU", format!("{:.1}%", p.cpu), theme.grad(cpu / 100.0)),
+        row("Memory", format!("{} ({:.1}%)", human_bytes(p.mem_bytes), p.mem_pct), theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0))),
+        row("Virtual", human_bytes(p.virt), theme.fg.color()),
+        row("Disk R/W", format!("{} / {}", human_bytes(p.disk_read), human_bytes(p.disk_written)), theme.fg.color()),
+        row("Started", started, theme.fg.color()),
+        row("Run time", human_duration(p.run_time), theme.fg.color()),
+        row("Exe", truncate(if p.exe.is_empty() { "—" } else { &p.exe }, wrap), theme.fg.color()),
+        row("Cwd", truncate(if p.cwd.is_empty() { "—" } else { &p.cwd }, wrap), theme.fg.color()),
+        row("Command", truncate(&p.cmd, wrap), theme.dim.color()),
+        Line::from(Span::styled(
+            "Enter / Esc to close · K to signal",
+            dim(theme),
+        )),
+    ];
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app: &App) {
+    let target = app
+        .selected_proc()
+        .map(|p| format!("{} ({})", truncate(&p.name, 20), p.pid))
+        .unwrap_or_else(|| "process".into());
+    let rect = centered(area, 40, (crate::app::SIGNALS.len() + 3) as u16);
+    f.render_widget(Clear, rect);
+    let block = panel(&format!("signal · {}", target), theme);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, (name, num, _)) in crate::app::SIGNALS.iter().enumerate() {
+        let selected = i == idx;
+        let style = if selected {
+            Style::default()
+                .bg(theme.selection.color())
+                .fg(theme.accent.color())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg.color())
+        };
+        let marker = if selected { "▶ " } else { "  " };
+        lines.push(Line::from(Span::styled(
+            format!("{}{:<10} {:>2}", marker, name, num),
+            style,
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        "↑/↓ select · Enter send · Esc cancel",
+        dim(theme),
+    )));
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
-    let rect = centered(area, 56, 22);
+    let rect = centered(area, 56, 24);
     f.render_widget(Clear, rect);
     let block = panel("help · toptop", theme);
     let inner = block.inner(rect);
@@ -706,12 +826,15 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("↑/↓ k/j", "move selection"),
         ("PgUp/PgDn", "page up / down"),
         ("Home/End g/G", "jump to first / last"),
+        ("Enter", "process details"),
         ("s", "cycle sort column"),
         ("i", "invert sort order"),
+        ("click header", "sort by column"),
         ("t", "toggle process tree"),
         ("e", "toggle per-core CPU meters"),
         ("/", "filter processes"),
-        ("K / F9 / Del", "terminate (SIGTERM)"),
+        ("K / F9", "signal menu"),
+        ("Del", "terminate (SIGTERM)"),
         ("x", "kill (SIGKILL)"),
         ("p / P", "next / prev theme"),
         ("+ / -", "faster / slower refresh"),

@@ -31,14 +31,21 @@ single ~1 MB binary with no runtime dependencies.
 - **Truecolor gradient meters** for CPU (global + per‑core), RAM, swap, disks and sensors.
 - **Interactive process table**
   - Sort by CPU, memory, PID, name, user, or runtime — ascending or descending.
+  - **Click a column header** to sort by it (click again to flip direction).
   - **Tree view** showing the real parent/child process hierarchy.
   - Live **filter** as you type.
-  - **Kill** the selected process — `SIGTERM` or `SIGKILL` — behind a confirmation prompt.
+  - **Process detail view** (`Enter`): PID/PPID, user, state, threads, RSS &
+    virtual memory, disk I/O totals, start time, runtime, exe path, cwd, command.
+  - **htop-style signal menu** (`K` / `F9`): send any of nine signals
+    (`SIGTERM`, `SIGKILL`, `SIGINT`, `SIGHUP`, `SIGQUIT`, `SIGSTOP`, `SIGCONT`,
+    `SIGUSR1`, `SIGUSR2`) behind a confirmation prompt.
   - Full **mouse support**: click to select, scroll wheel to navigate.
 - **Network** per‑interface throughput with a mirrored rx/tx braille graph and totals.
 - **Disk** per‑mount usage meters plus aggregate read/write I/O rates.
 - **Sensors** — temperatures scaled against each sensor's critical threshold.
 - **Five themes** — `gruvbox`, `nord`, `dracula`, `tokyonight`, `matrix` — cycle live with `p`.
+- **Live header** with a wall clock, uptime, load average, task counts, and a
+  battery indicator (when present).
 - **Adaptive layout** that reflows from a 250‑column desktop down to a tiny pane.
 - **Config persistence** at `~/.config/toptop/config.conf`, plus CLI overrides.
 - **Headless `--snapshot` mode** for scripts, dashboards, and machines without a TTY.
@@ -82,11 +89,13 @@ OPTIONS:
 | `↑` / `↓`, `k` / `j` | move selection | `t` | toggle process tree |
 | `PgUp` / `PgDn` | page up / down | `e` | toggle per‑core CPU meters |
 | `Home`/`End`, `g`/`G` | first / last | `p` / `P` | next / previous theme |
-| `s` | cycle sort column | `+` / `-` | faster / slower refresh |
-| `i` | invert sort order | `space` | pause / resume |
-| `/` | filter processes | `?` / `F1` | help overlay |
-| `K` / `F9` / `Del` | terminate (SIGTERM) | `q` / `Ctrl‑C` | quit |
-| `x` | kill (SIGKILL) | `Esc` | clear filter / quit |
+| `Enter` | process detail view | `+` / `-` | faster / slower refresh |
+| `s` | cycle sort column | `space` | pause / resume |
+| `i` | invert sort order | `?` / `F1` | help overlay |
+| `/` | filter processes | `K` / `F9` | signal menu |
+| `Del` | terminate (SIGTERM) | `x` | kill (SIGKILL) |
+| click header | sort by column | `q` / `Ctrl‑C` | quit |
+| `Esc` | close overlay / clear filter / quit | | |
 
 ## Architecture
 

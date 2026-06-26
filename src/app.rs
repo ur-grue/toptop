@@ -54,6 +54,19 @@ pub struct PendingKill {
     pub signal: Signal,
 }
 
+/// Signals offered by the interactive signal menu (label, number, signal).
+pub const SIGNALS: &[(&str, i32, Signal)] = &[
+    ("SIGTERM", 15, Signal::Term),
+    ("SIGKILL", 9, Signal::Kill),
+    ("SIGINT", 2, Signal::Interrupt),
+    ("SIGHUP", 1, Signal::Hangup),
+    ("SIGQUIT", 3, Signal::Quit),
+    ("SIGSTOP", 19, Signal::Stop),
+    ("SIGCONT", 18, Signal::Continue),
+    ("SIGUSR1", 10, Signal::User1),
+    ("SIGUSR2", 12, Signal::User2),
+];
+
 /// The whole runtime state.
 pub struct App {
     pub collector: Collector,
@@ -80,6 +93,10 @@ pub struct App {
     pub proc_rows: usize,
 
     pub pending_kill: Option<PendingKill>,
+    /// When `Some`, the signal menu is open with the given highlighted index.
+    pub signal_menu: Option<usize>,
+    /// Whether the process detail overlay is shown for the selection.
+    pub show_detail: bool,
     pub status: Option<(String, Instant)>,
 }
 
@@ -106,6 +123,8 @@ impl App {
             proc_area: Rect::default(),
             proc_rows: 0,
             pending_kill: None,
+            signal_menu: None,
+            show_detail: false,
             status: None,
         };
         app.rebuild_proc_view();
@@ -307,6 +326,11 @@ impl App {
         self.set_status(format!("Refresh: {} ms", new));
     }
 
+    /// The currently selected process row, if any.
+    pub fn selected_proc(&self) -> Option<&ProcInfo> {
+        self.selected_index().map(|i| &self.proc_view[i])
+    }
+
     fn request_kill(&mut self, signal: Signal) {
         let Some(idx) = self.selected_index() else {
             return;
@@ -317,6 +341,22 @@ impl App {
             name: p.name.clone(),
             signal,
         });
+    }
+
+    /// Open the interactive signal menu for the selected process.
+    fn open_signal_menu(&mut self) {
+        if self.selected_index().is_some() {
+            self.signal_menu = Some(0);
+        }
+    }
+
+    /// Confirm the highlighted signal from the menu, routing it through the
+    /// kill-confirmation prompt.
+    fn choose_signal(&mut self) {
+        if let Some(idx) = self.signal_menu.take() {
+            let signal = SIGNALS[idx.min(SIGNALS.len() - 1)].2;
+            self.request_kill(signal);
+        }
     }
 
     fn confirm_kill(&mut self) {
@@ -340,6 +380,22 @@ impl App {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.confirm_kill(),
                 _ => self.pending_kill = None,
+            }
+            return;
+        }
+
+        // Signal menu next.
+        if let Some(idx) = self.signal_menu {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.signal_menu = Some(idx.saturating_sub(1));
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.signal_menu = Some((idx + 1).min(SIGNALS.len() - 1));
+                }
+                KeyCode::Enter => self.choose_signal(),
+                KeyCode::Esc | KeyCode::Char('q') => self.signal_menu = None,
+                _ => {}
             }
             return;
         }
@@ -382,14 +438,17 @@ impl App {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => {
-                // Esc clears an applied filter first; only quits when none set.
-                if !self.filter.is_empty() {
+                // Esc peels back overlays in order, then clears a filter, then quits.
+                if self.show_detail {
+                    self.show_detail = false;
+                } else if !self.filter.is_empty() {
                     self.filter.clear();
                     self.rebuild_proc_view();
                 } else {
                     self.should_quit = true;
                 }
             }
+            KeyCode::Enter => self.show_detail = !self.show_detail,
             KeyCode::Char('?') | KeyCode::F(1) => self.show_help = true,
             KeyCode::Char(' ') => {
                 self.paused = !self.paused;
@@ -426,7 +485,8 @@ impl App {
                 self.filter_mode = true;
                 self.set_status("Filter: type to match, Enter to apply, Esc to clear");
             }
-            KeyCode::Char('K') | KeyCode::F(9) | KeyCode::Delete => self.request_kill(Signal::Term),
+            KeyCode::Char('K') | KeyCode::F(9) => self.open_signal_menu(),
+            KeyCode::Delete => self.request_kill(Signal::Term),
             KeyCode::Char('x') => self.request_kill(Signal::Kill),
             _ => {}
         }
@@ -434,7 +494,7 @@ impl App {
 
     /// Handle a mouse event over the process table.
     pub fn on_mouse(&mut self, ev: MouseEvent) {
-        if self.show_help || self.pending_kill.is_some() {
+        if self.show_help || self.pending_kill.is_some() || self.signal_menu.is_some() {
             return;
         }
         match ev.kind {
@@ -442,6 +502,19 @@ impl App {
             MouseEventKind::ScrollDown => self.move_selection(3),
             MouseEventKind::Down(_) => {
                 let area = self.proc_area;
+                // Header row sits one line above the data rows: click to sort.
+                if area.height > 0 && ev.row + 1 == area.y && ev.column >= area.x {
+                    if let Some(field) = header_sort_at(ev.column - area.x) {
+                        if self.sort == field {
+                            self.sort_desc = !self.sort_desc;
+                        } else {
+                            self.sort = field;
+                            self.sort_desc = true;
+                        }
+                        self.rebuild_proc_view();
+                    }
+                    return;
+                }
                 if ev.column >= area.x
                     && ev.column < area.x + area.width
                     && ev.row >= area.y
@@ -456,6 +529,20 @@ impl App {
             }
             _ => {}
         }
+    }
+}
+
+/// Map a column-relative x offset on the process header to its sort field.
+/// Ranges mirror the table column widths in `ui::render_procs`.
+pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
+    match rel_x {
+        0..=7 => Some(SortField::Pid),
+        8..=17 => Some(SortField::User),
+        18..=23 => Some(SortField::Cpu),
+        24..=37 => Some(SortField::Mem),
+        38..=45 => Some(SortField::Time),
+        46..=47 => None,
+        _ => Some(SortField::Name),
     }
 }
 

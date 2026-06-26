@@ -19,6 +19,7 @@ ratatui = "0.30"
 crossterm = "0.29"
 sysinfo = "0.38"
 anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [profile.release]
 opt-level = 3

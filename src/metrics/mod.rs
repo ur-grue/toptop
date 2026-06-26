@@ -84,9 +84,16 @@ pub struct ProcInfo {
     pub cpu: f32,
     pub mem_pct: f32,
     pub mem_bytes: u64,
-    pub status: char,
+    pub virt: u64,
+    pub disk_read: u64,
+    pub disk_written: u64,
+    pub start_time: u64,
     pub run_time: u64,
+    pub status: char,
+    pub status_long: &'static str,
     pub threads: usize,
+    pub exe: String,
+    pub cwd: String,
     /// Indentation depth when rendered as a tree (0 when flat).
     pub depth: usize,
 }
@@ -98,6 +105,13 @@ pub struct SensorInfo {
     pub temp: f32,
     pub high: Option<f32>,
     pub critical: Option<f32>,
+}
+
+/// Battery state, read from `/sys/class/power_supply` when present.
+#[derive(Clone)]
+pub struct Battery {
+    pub percent: f32,
+    pub status: String,
 }
 
 /// The single source of truth the UI reads from.
@@ -125,6 +139,7 @@ pub struct Collector {
     last_disk_write: u64,
     pub procs: Vec<ProcInfo>,
     pub sensors: Vec<SensorInfo>,
+    pub battery: Option<Battery>,
     pub uptime: u64,
 }
 
@@ -143,6 +158,7 @@ impl Collector {
             .with_user(UpdateKind::OnlyIfNotSet)
             .with_cmd(UpdateKind::OnlyIfNotSet)
             .with_exe(UpdateKind::OnlyIfNotSet)
+            .with_cwd(UpdateKind::OnlyIfNotSet)
             .with_tasks();
         let mut sys = System::new_with_specifics(refresh_kind);
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, proc_refresh);
@@ -201,6 +217,7 @@ impl Collector {
             last_disk_write: 0,
             procs: Vec::new(),
             sensors: Vec::new(),
+            battery: None,
             uptime: 0,
         };
         collector.refresh();
@@ -232,6 +249,7 @@ impl Collector {
         self.refresh_disks(elapsed);
         self.refresh_procs();
         self.refresh_sensors();
+        self.battery = read_battery();
     }
 
     fn refresh_cpu(&mut self) {
@@ -376,6 +394,8 @@ impl Collector {
                         .unwrap_or_else(|| (**uid).to_string())
                 })
                 .unwrap_or_else(|| "—".into());
+            let du = proc_.disk_usage();
+            let status = proc_.status();
             procs.push(ProcInfo {
                 pid: pid.as_u32(),
                 ppid: proc_.parent().map(|p| p.as_u32()),
@@ -385,9 +405,22 @@ impl Collector {
                 cpu: proc_.cpu_usage(),
                 mem_pct: (proc_.memory() as f64 / total_mem as f64 * 100.0) as f32,
                 mem_bytes: proc_.memory(),
-                status: status_char(proc_.status()),
+                virt: proc_.virtual_memory(),
+                disk_read: du.total_read_bytes,
+                disk_written: du.total_written_bytes,
+                start_time: proc_.start_time(),
                 run_time: proc_.run_time(),
+                status: status_char(status),
+                status_long: status_label(status),
                 threads: proc_.tasks().map(|t| t.len()).unwrap_or(0),
+                exe: proc_
+                    .exe()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                cwd: proc_
+                    .cwd()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
                 depth: 0,
             });
         }
@@ -429,6 +462,48 @@ fn pct(part: u64, whole: u64) -> f32 {
         0.0
     } else {
         (part as f64 / whole as f64 * 100.0) as f32
+    }
+}
+
+/// Read the first battery from `/sys/class/power_supply`, if any.
+fn read_battery() -> Option<Battery> {
+    let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("BAT") {
+            continue;
+        }
+        let capacity = std::fs::read_to_string(path.join("capacity"))
+            .ok()
+            .and_then(|s| s.trim().parse::<f32>().ok());
+        if let Some(percent) = capacity {
+            let status = std::fs::read_to_string(path.join("status"))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| "Unknown".to_string());
+            return Some(Battery { percent, status });
+        }
+    }
+    None
+}
+
+fn status_label(status: ProcessStatus) -> &'static str {
+    match status {
+        ProcessStatus::Run => "Running",
+        ProcessStatus::Sleep => "Sleeping",
+        ProcessStatus::Idle => "Idle",
+        ProcessStatus::Stop => "Stopped",
+        ProcessStatus::Zombie => "Zombie",
+        ProcessStatus::Tracing => "Tracing",
+        ProcessStatus::Dead => "Dead",
+        ProcessStatus::Wakekill => "Wakekill",
+        ProcessStatus::Waking => "Waking",
+        ProcessStatus::Parked => "Parked",
+        ProcessStatus::LockBlocked => "Lock-blocked",
+        ProcessStatus::UninterruptibleDiskSleep => "Disk-sleep",
+        ProcessStatus::Suspended => "Suspended",
+        ProcessStatus::Unknown(_) => "Unknown",
     }
 }
 

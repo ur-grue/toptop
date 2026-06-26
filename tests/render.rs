@@ -47,10 +47,38 @@ fn overlays_render() {
     render_at(&mut app, 100, 30);
     app.show_help = false;
 
-    // Trigger the kill-confirm modal on the selected process and render it.
+    // Process detail overlay.
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.show_detail);
+    render_at(&mut app, 100, 30);
+    app.on_key(key(KeyCode::Enter));
+    assert!(!app.show_detail);
+
+    // Signal menu → choose a signal → kill-confirm modal.
     app.on_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::empty()));
+    assert!(app.signal_menu.is_some());
+    render_at(&mut app, 100, 30);
+    app.on_key(key(KeyCode::Down));
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.signal_menu.is_none());
     assert!(app.pending_kill.is_some());
     render_at(&mut app, 100, 30);
+
+    // Cancel the confirmation.
+    app.on_key(key(KeyCode::Char('n')));
+    assert!(app.pending_kill.is_none());
+}
+
+#[test]
+fn header_sort_mapping() {
+    use toptop::app::{header_sort_at, SortField};
+    assert_eq!(header_sort_at(0), Some(SortField::Pid));
+    assert_eq!(header_sort_at(10), Some(SortField::User));
+    assert_eq!(header_sort_at(20), Some(SortField::Cpu));
+    assert_eq!(header_sort_at(26), Some(SortField::Mem));
+    assert_eq!(header_sort_at(40), Some(SortField::Time));
+    assert_eq!(header_sort_at(46), None);
+    assert_eq!(header_sort_at(60), Some(SortField::Name));
 }
 
 #[test]
