@@ -63,7 +63,7 @@
 | 🔌 **Connections inspector** | live TCP/UDP table mapping sockets → owning process (press `n`) |
 | 🗄️ **Disk panel** | per‑mount usage meters plus a mirrored read/write I/O graph |
 | 🎮 **GPU monitoring** | NVIDIA (`nvidia-smi`) **and** AMD/Intel (`sysfs`), polled off‑thread |
-| 🤖 **AI / local‑LLM view** | compute **vs. memory‑bandwidth** util, VRAM spill warning, per‑process VRAM, throttle flag, and inference‑runtime detection (press `a`) |
+| 🤖 **AI / local‑LLM view** | compute **vs. memory‑bandwidth** util, VRAM spill warning, per‑process VRAM, throttle flag, **auto‑discovered server tokens/sec**, tokens/sec/watt, and serving/training detection (press `a`) |
 | 🌡️ **Sensors & battery** | temperatures scaled to each critical threshold; battery in the header |
 | 🎨 **Six themes** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk`, cycle live with `p` |
 | 🧩 **Saveable layouts** | `full` / `cpu` / `process` presets, cycled with `L` and persisted |
@@ -92,9 +92,33 @@ Press **`a`** (or launch with **`--ai`**) for a view built around the question
   KoboldCpp, ExLlama, MLX, LocalAI and friends are recognized and listed with
   their CPU, RAM and VRAM — including **CPU‑only** inference when there's no GPU.
 
-Pipe it anywhere with `toptop --export json` (includes GPU bandwidth/power/throttle
-and GPU processes) — the building block for multi‑host fleet monitoring of an
-inference cluster.
+### …and the numbers `nvidia-smi` can't see
+
+toptop already knows which PIDs are inference runtimes **and which ports they
+listen on**, so it auto‑discovers your local servers and scrapes their metrics
+endpoints — no config, no exporters:
+
+- **Live tokens/sec** (generation *and* prefill), **KV‑cache pressure**, **queue
+  depth** and **TTFT**, read straight from llama.cpp / vLLM / TGI Prometheus
+  `/metrics` and Ollama `/api/ps` — over a tiny dependency‑free localhost client
+  on a background thread.
+- **tokens/sec/watt** — throughput fused with GPU power draw, the efficiency
+  number that maps to your electricity/cloud bill.
+- **Serving vs. training** — training launchers (torchrun, DeepSpeed, Axolotl,
+  Unsloth, LLaMA‑Factory, Megatron, torchtune…) are detected too, with a
+  **dataloader‑bound** hint when a run pins a CPU while the GPU sits idle.
+- **Multi‑GPU aggregate** — Σ VRAM and Σ power across cards, with a **sharding
+  imbalance** warning when one GPU is hot and the others idle.
+
+```text
+Inference servers (auto-discovered)
+  vLLM :8000  meta-llama/Llama-3-8B
+    83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms
+```
+
+Pipe all of it anywhere with `toptop --export json` (GPU bandwidth/power/throttle,
+GPU processes, **and** discovered servers with tokens/sec) — the building block
+for multi‑host fleet monitoring of an inference cluster.
 
 ## 🚀 Install
 
