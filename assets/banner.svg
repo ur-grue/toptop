@@ -5,16 +5,31 @@
 <linearGradient id="title" gradientUnits="userSpaceOnUse" x1="212.5" y1="0" x2="667.5" y2="0"><stop offset="0" stop-color="#00f0ff"/><stop offset="0.5" stop-color="#7b61ff"/><stop offset="1" stop-color="#ff2e97"/></linearGradient>
 </defs>
 <rect width="880" height="300" fill="url(#sky)"/>
-<clipPath id="sun"><circle cx="440.0" cy="150" r="92"/></clipPath>
-<circle cx="440.0" cy="150" r="92" fill="url(#sun)"/>
-<g clip-path="url(#sun)">
-<rect x="348.0" y="158.0" width="184" height="5" fill="#150726"/>
-<rect x="348.0" y="169.0" width="184" height="7" fill="#150726"/>
-<rect x="348.0" y="182.0" width="184" height="9" fill="#150726"/>
-<rect x="348.0" y="197.0" width="184" height="11" fill="#150726"/>
-<rect x="348.0" y="214.0" width="184" height="13" fill="#150726"/>
-<rect x="348.0" y="233.0" width="184" height="15" fill="#150726"/>
+<g fill="#cdeffd">
+<rect x="52" y="56" width="3" height="3" opacity="0.9"/>
+<rect x="95" y="96" width="2" height="2" opacity="0.55"/>
+<rect x="150" y="40" width="2" height="2" opacity="0.9"/>
+<rect x="40" y="128" width="3" height="3" opacity="0.55"/>
+<rect x="180" y="150" width="2" height="2" opacity="0.9"/>
+<rect x="728" y="46" width="2" height="2" opacity="0.55"/>
+<rect x="800" y="84" width="3" height="3" opacity="0.9"/>
+<rect x="842" y="124" width="2" height="2" opacity="0.55"/>
+<rect x="690" y="150" width="2" height="2" opacity="0.9"/>
+<rect x="770" y="150" width="3" height="3" opacity="0.55"/>
+<rect x="610" y="36" width="2" height="2" opacity="0.9"/>
+<rect x="270" y="30" width="2" height="2" opacity="0.55"/>
 </g>
+<clipPath id="sun"><circle cx="440.0" cy="168" r="88"/></clipPath>
+<circle cx="440.0" cy="168" r="88" fill="url(#sun)"/>
+<g clip-path="url(#sun)">
+<rect x="352.0" y="176.0" width="176" height="5" fill="#150726"/>
+<rect x="352.0" y="187.0" width="176" height="7" fill="#150726"/>
+<rect x="352.0" y="200.0" width="176" height="9" fill="#150726"/>
+<rect x="352.0" y="215.0" width="176" height="11" fill="#150726"/>
+<rect x="352.0" y="232.0" width="176" height="13" fill="#150726"/>
+<rect x="352.0" y="251.0" width="176" height="15" fill="#150726"/>
+</g>
+<rect x="0" y="203" width="880" height="3" fill="#00f0ff" opacity="0.85"/>
 <g stroke="#00f0ff" stroke-width="1.5" opacity="0.55">
 <line x1="440.0" y1="205" x2="-415.0" y2="300"/>
 <line x1="440.0" y1="205" x2="-320.0" y2="300"/>
@@ -40,6 +55,7 @@
 <line x1="0" y1="225.5" x2="880" y2="225.5"/>
 <line x1="0" y1="207.8" x2="880" y2="207.8"/>
 </g>
+<rect x="194" y="30" width="491" height="113" rx="10" fill="#0a0414" opacity="0.42"/>
 <rect x="212.5" y="45" width="12" height="12" rx="1" fill="#ff2e97" opacity="0.40"/>
 <rect x="225.5" y="45" width="12" height="12" rx="1" fill="#ff2e97" opacity="0.40"/>
 <rect x="238.5" y="45" width="12" height="12" rx="1" fill="#ff2e97" opacity="0.40"/>

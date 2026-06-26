@@ -135,20 +135,24 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    // Live clock, right-aligned on the same row.
+    // Live clock, right-aligned — but only when it won't collide with the
+    // left-hand status text (otherwise the two overlap on narrow terminals).
     let clock = chrono::Local::now().format("%H:%M:%S").to_string();
+    let left_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let left = Paragraph::new(Line::from(spans));
     f.render_widget(left, area);
-    let clock_span = Span::styled(
-        clock,
-        Style::default()
-            .fg(theme.accent2.color())
-            .add_modifier(Modifier::BOLD),
-    );
-    f.render_widget(
-        Paragraph::new(Line::from(clock_span)).alignment(Alignment::Right),
-        area,
-    );
+    if (area.width as usize) >= left_len + clock.len() + 2 {
+        let clock_span = Span::styled(
+            clock,
+            Style::default()
+                .fg(theme.accent2.color())
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(clock_span)).alignment(Alignment::Right),
+            area,
+        );
+    }
 }
 
 // ── Body layout ──────────────────────────────────────────────────────────────

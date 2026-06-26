@@ -20,23 +20,24 @@
 ---
 
 ```text
-▟▛ toptop  vm  Linux (Ubuntu 24.04)  kernel 6.18.5  up 00:12:43  load 0.26 0.22 0.15   10:00:04
-╭ cpu ──────────────────────────────╮╭ memory ─────────────────╮╭ network ─────────────────╮
-│all   1.6%  2.80 GHz  4c/4t        ││ram   3.8%  610 MiB / 15.││eth0  ↓ 1.2M/s     ↑ 40K/s│
-│        ⢀⣀⣠⣄⣀⡀      ⢀⡀            ││█▍░░░░░░░░░░░░░░░░░░░░░░░░││Σ ↓2.0 MiB  ↑40.4 MiB     │
-│ 0 ▎███░ 23  1 ██░░ 12             ││swp   0.0%  0 B / 0 B    ││   ⢀⣀⣠⣄⣀⡀   (rx)         │
-│ 2 █░░░  8   3 ███░ 19             │╰─────────────────────────╯╰──────────────────────────╯
-│        ⢀⣀⣠⣄⣀⡀      ⢀⡀            │╭ gpu · sensors ──────────╮╭ disk ────────────────────╮
-│ ⢀⣀⣀⣠⣄⣀⣀⡀  (load gradient)        ││gpu0      ███▌ 41%  56°C ││io R 1.1M/s     W 0 B/s   │
-│ ⠉⠛⠿⠟⠋⠉                            ││  RTX 4090 · 2G / 24G    ││   ⢀⣀⣠⣄⣀⡀  ⢀⡀  (r/w)     │
-╰───────────────────────────────────╯╰─────────────────────────╯╰──────────────────────────╯
-╭ processes · CPU% (▼) ────────────────────────────────────────────────────────────────────╮
-│PID     USER      CPU%  MEM%  MEM     DISK     TIME    S COMMAND                            │
-│    560 root        4.2   2.4 379M    1.1M/s   11:52   S claude --output-format=stream-json │
-│    543 root        0.4   0.4  59M    ·        12:00   S environment-manager task-run       │
-│  19201 you         2.7   0.0  12M    ·        00:16   R toptop                             │
-╰──────────────────────────────────────────────────────────────────────────────────────────╯
-?:help Enter:detail a:ai n:net s:sort t:tree /:filter K:signal L:layout q:quit
+▟▛ toptop  vm  Linux (Ubuntu 24.04)  kernel 6.18.5  up 00:03:50  load 0.34 0.39 0.18  111 tasks, 1 run
+╭ cpu ─────────────────────────────────────╮╭ memory ───────────────────────╮╭ network ──────────────────────╮
+│all   2.4%  2.80 GHz  4c/4t               ││ram   3.8%  608 MiB / 15.7 GiB ││eth0  ↓ 0 B/s      ↑ 0 B/s     │
+│                                          ││█▏░░░░░░░░░░░░░░░░░░░░░░░░░░░░░││Σ ↓1015 KiB  ↑11.4 MiB         │
+│                                          ││swp   0.0%  0 B / 0 B          ││                               │
+│                                          │╰───────────────────────────────╯╰───────────────────────────────╯
+│                                        ⢠ │╭ sensors ──────────────────────╮╭ disk ─────────────────────────╮
+│ 0 ░░░░░░   0  1 ░░░░░░   0               ││no sensors detected            ││io R 0 B/s      W 0 B/s        │
+│ 2 ▎░░░░░   3  3 ▎░░░░░   3               ││                               ││/       ██████▎  89% 252G      │
+╰──────────────────────────────────────────╯╰───────────────────────────────╯╰───────────────────────────────╯
+╭ processes · CPU% (▼) ──────────────────────────────────────────────────────────────────────────────────────╮
+│PID     USER      CPU%  MEM%  MEM     DISK     TIME    S COMMAND                                            │
+│   3715 root        6.3   0.0 5.8M    ·        00:01   R target/debug/examples/preview 110 18               │
+│    553 root        3.1   2.3 376M    ·        02:55   S claude --output-format=stream-json --verbose --sett│
+│    568 root        0.0   2.3 376M    ·        02:52   S claude --output-format=stream-json --verbose --sett│
+│    557 root        0.0   0.0 0       ·        02:54   I kworker/2:1H-kblockd                               │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+?:help a:ai Enter:detail n:net s:sort t:tree /:filter K:signal L:layout q:quit
 ```
 
 > A fast, beautiful, at‑a‑glance view of your machine — high‑resolution braille graphs,
@@ -48,16 +49,21 @@
 <summary><b>🤖 AI / local‑LLM view</b> &nbsp;(<code>a</code>) — the metrics nvidia‑smi can't see</summary>
 
 ```text
-╭ AI · local-LLM GPU view · Esc/a to close ───────────────────────────────────────╮
-│gpu0  NVIDIA GeForce RTX 4090   290/450W  72°C                                     │
-│  compute   █████████▎░░░░░░░░░░░░░░░░░░░░  31%                                    │
-│  mem b/w   ███████████████████████▍░░░░░░  78%                                    │
-│  vram      ███████████████████████████▌░░ 22.0 GiB / 24.0 GiB                     │
-│             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)            │
-│Inference servers (auto-discovered)                                               │
-│  vLLM :8000  meta-llama/Llama-3-8B                                                │
-│    83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms         │
-╰──────────────────────────────────────────────────────────────────────────────────╯
+╭ AI · local-LLM GPU view · Esc/a to close ──────────────────────────────────╮
+│gpu0  NVIDIA GeForce RTX 4090   290/450W  72°C                              │
+│  compute   █████████▎░░░░░░░░░░░░░░░░░░░░  31%                             │
+│  mem b/w   ███████████████████████▍░░░░░░  78%                             │
+│  vram      ███████████████████████████▌░░ 22.0 GiB / 24.0 GiB              │
+│             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)     │
+│                                                                            │
+│Inference servers (auto-discovered)                                         │
+│  vLLM :8000  meta-llama/Llama-3-8B                                         │
+│    83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms  │
+│                                                                            │
+│GPU processes (by VRAM)                                                     │
+│      PID       VRAM   CPU%  PROCESS                                        │
+│      559   22.0 GiB    0.0  Bun Pool 0                                     │
+╰────────────────────────────────────────────────────────────────────────────╯
 ```
 </details>
 
@@ -65,14 +71,14 @@
 <summary><b>🛰️ Multi‑host fleet view</b> &nbsp;(<code>--remote</code>) — monitor a whole inference cluster</summary>
 
 ```text
-▟▛ toptop fleet  4 hosts · 3 online  · 6 GPUs · Σ vram 74G/184G  · Σ 154 tok/s    10:52:28
-╭ hosts ──────────────────────────────────────────────────────────────────────────────────╮
-│HOST          STATUS       CPU%  MEM   LOAD   GPU%  VRAM   TOK/S  TASKS  UP                 │
-│gpu-node-1    ● online     37    53    4.6    91    41G    58     512    1d 00:00:00        │
-│gpu-node-2    ● online     88    91    11.0   22    12G    12     512    1d 00:00:00        │
-│inference-3   ● online     12    28    1.5    76    21G    83     512    1d 00:00:00        │
-│offline-box   ✕ Connection refused                                                         │
-╰───────────────────────────────────────────────────────────────────────────────────────────╯
+▟▛ toptop fleet  4 hosts · 3 online  · 6 GPUs · Σ vram 74G/184G  · Σ 154 tok/s              11:13:20
+╭ hosts ───────────────────────────────────────────────────────────────────────────────────────────╮
+│HOST             STATUS           CPU%  MEM   LOAD   GPU%  VRAM     TOK/S   TASKS  UP             │
+│gpu-node-1       ● online         37    53    4.6    91    41G      58      512    1d 00:00:00    │
+│gpu-node-2       ● online         88    91    11.0   22    12G      12      512    1d 00:00:00    │
+│inference-3      ● online         12    28    1.5    76    21G      83      512    1d 00:00:00    │
+│offline-box      ✕ ssh: connect:… —     —     —      —     —        —       —      —              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 </details>
 
@@ -160,14 +166,26 @@ toptop --remote-cmd "/opt/bin/toptop --export json" --remote box-a,box-b
 ```
 
 ```text
-▟▛ toptop fleet  4 hosts · 3 online  · 6 GPUs · Σ vram 74G/184G  · Σ 154 tok/s
-╭ hosts ──────────────────────────────────────────────────────────────────────────╮
-│HOST          STATUS     CPU%  MEM   LOAD   GPU%  VRAM   TOK/S  TASKS  UP           │
-│gpu-node-1    ● online   37    53    4.6    91    41G    58     512    1d 00:00:00  │
-│gpu-node-2    ● online   88    91    11.0   22    12G    12     512    1d 00:00:00  │
-│inference-3   ● online   12    28    1.5    76    21G    83     512    1d 00:00:00  │
-│offline-box   ✕ Connection refused                                                 │
-╰────────────────────────────────────────────────────────────────────────────────────╯
+▟▛ toptop fleet  4 hosts · 3 online  · 6 GPUs · Σ vram 74G/184G  · Σ 154 tok/s              11:13:20
+╭ hosts ───────────────────────────────────────────────────────────────────────────────────────────╮
+│HOST             STATUS           CPU%  MEM   LOAD   GPU%  VRAM     TOK/S   TASKS  UP             │
+│gpu-node-1       ● online         37    53    4.6    91    41G      58      512    1d 00:00:00    │
+│gpu-node-2       ● online         88    91    11.0   22    12G      12      512    1d 00:00:00    │
+│inference-3      ● online         12    28    1.5    76    21G      83      512    1d 00:00:00    │
+│offline-box      ✕ ssh: connect:… —     —     —      —     —        —       —      —              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭ host · gpu-node-1 ───────────────────────────────────────────────────────────────────────────────╮
+│Linux (Ubuntu 24.04)   load 4.62 3.70 3.08   up 1d 00:00:00   512 tasks (4 run)   18ms            │
+│cpu   ███████████▏░░░░░░░░░░░░░░░░░░ 37%                                                          │
+│mem   ████████████████░░░░░░░░░░░░░░ 34.0 GiB / 64.0 GiB                                          │
+│vram  ███████████████▍░░░░░░░░░░░░░░ 41.0 GiB / 80.0 GiB  ·  2 GPU  ·  620 W                      │
+│  vLLM Llama-3-70B  58.3 tok/s  kv 68%                                                            │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+↑/↓:select p:theme q:quit
 ```
 
 Aggregate **Σ tokens/sec** and **Σ VRAM** across the fleet; select a host to see its

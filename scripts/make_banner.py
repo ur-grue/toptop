@@ -58,9 +58,25 @@ def grid_lines():
     return out
 
 
+def stars():
+    """A scatter of pixel stars in the upper sky, clear of the title."""
+    pts = [
+        (52, 56), (95, 96), (150, 40), (40, 128), (180, 150),
+        (728, 46), (800, 84), (842, 124), (690, 150), (770, 150),
+        (610, 36), (270, 30),
+    ]
+    out = ['<g fill="#cdeffd">']
+    for i, (x, y) in enumerate(pts):
+        s = 3 if i % 3 == 0 else 2
+        op = 0.9 if i % 2 == 0 else 0.55
+        out.append(f'<rect x="{x}" y="{y}" width="{s}" height="{s}" opacity="{op}"/>')
+    out.append("</g>")
+    return out
+
+
 def sun():
     """Classic banded synthwave sun behind the title."""
-    cx, cy, r = W / 2, 150, 92
+    cx, cy, r = W / 2, 168, 88
     out = [f'<clipPath id="sun"><circle cx="{cx}" cy="{cy}" r="{r}"/></clipPath>']
     out.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="url(#sun)"/>')
     out.append(f'<g clip-path="url(#sun)">')
@@ -123,8 +139,16 @@ def main():
     svg.append("</defs>")
 
     svg.append(f'<rect width="{W}" height="{H}" fill="url(#sky)"/>')
+    svg += stars()
     svg += sun()
+    # Bright neon horizon line where the sky meets the grid.
+    svg.append('<rect x="0" y="203" width="{}" height="3" fill="#00f0ff" opacity="0.85"/>'.format(W))
     svg += grid_lines()
+    # Dark rounded backdrop so the title pops against the sun behind it.
+    svg.append(
+        f'<rect x="{x0-18:.0f}" y="{y0-12}" width="{real_w+36:.0f}" height="{7*PX+22}" '
+        f'rx="10" fill="#0a0414" opacity="0.42"/>'
+    )
     # Neon backing glow: an offset, dim-magenta copy of the title.
     glow_rects, _ = rects_for_title(x0, y0 + 3)
     glow_rects = [

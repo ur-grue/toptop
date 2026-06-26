@@ -42,6 +42,11 @@ fn main() {
                 power_limit: 450.0,
                 throttled: false,
             }];
+            let pid = app.collector.procs.first().map(|p| p.pid).unwrap_or(4242);
+            app.collector.gpu_procs = vec![toptop::metrics::gpu::GpuProc {
+                pid,
+                used_mem: 22 * 1024 * 1024 * 1024,
+            }];
             app.collector.servers = vec![toptop::metrics::ServerStats {
                 runtime: "vLLM",
                 pid: 4242,
