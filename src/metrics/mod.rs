@@ -358,7 +358,7 @@ impl Collector {
         self.nets.retain(|n| n.seen);
         // Most active interfaces first.
         self.nets
-            .sort_by(|a, b| (b.total_down + b.total_up).cmp(&(a.total_down + a.total_up)));
+            .sort_by_key(|n| std::cmp::Reverse(n.total_down + n.total_up));
     }
 
     fn refresh_disks(&mut self, elapsed: f64) {

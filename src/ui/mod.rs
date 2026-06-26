@@ -1285,7 +1285,7 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
             dim(theme),
         )]));
         let mut gprocs = c.gpu_procs.clone();
-        gprocs.sort_by(|a, b| b.used_mem.cmp(&a.used_mem));
+        gprocs.sort_by_key(|g| std::cmp::Reverse(g.used_mem));
         let cap = inner.height as usize;
         for gp in gprocs.iter() {
             if lines.len() >= cap {
