@@ -65,11 +65,15 @@ def stars():
         (728, 46), (800, 84), (842, 124), (690, 150), (770, 150),
         (610, 36), (270, 30),
     ]
-    out = ['<g fill="#cdeffd">']
+    out = ['<g fill="#eaf7ff">']
     for i, (x, y) in enumerate(pts):
-        s = 3 if i % 3 == 0 else 2
-        op = 0.9 if i % 2 == 0 else 0.55
+        s = 4 if i % 3 == 0 else 3
+        op = 1.0 if i % 2 == 0 else 0.7
+        # Tiny plus-twinkle on the bigger stars for a little sparkle.
         out.append(f'<rect x="{x}" y="{y}" width="{s}" height="{s}" opacity="{op}"/>')
+        if s == 4:
+            out.append(f'<rect x="{x-2}" y="{y+1}" width="{s+4}" height="1" opacity="{op*0.5}"/>')
+            out.append(f'<rect x="{x+1}" y="{y-2}" width="1" height="{s+4}" opacity="{op*0.5}"/>')
     out.append("</g>")
     return out
 
@@ -161,11 +165,12 @@ def main():
     svg += scanlines()
 
     # Tagline with a dark backing strip for guaranteed contrast over the grid.
-    svg.append(f'<rect x="0" y="262" width="{W}" height="26" fill="#0d0418" opacity="0.78"/>')
+    # Kept short so it never clips; the prose subtitle lives in the README.
+    svg.append(f'<rect x="0" y="259" width="{W}" height="30" fill="#0d0418" opacity="0.72"/>')
     svg.append(
-        f'<text x="{W/2}" y="280" fill="#9bf6ff" font-size="14" '
-        f'letter-spacing="3" text-anchor="middle">'
-        f'S Y S T E M   M O N I T O R  ·  htop power · btop looks · built in Rust · local-LLM brain</text>'
+        f'<text x="{W/2}" y="280" fill="#9bf6ff" font-size="16" font-weight="bold" '
+        f'letter-spacing="9" text-anchor="middle">'
+        f'S Y S T E M   M O N I T O R</text>'
     )
     svg.append("</svg>")
 
