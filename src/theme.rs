@@ -92,10 +92,10 @@ const fn rgb(r: u8, g: u8, b: u8) -> Rgb {
 
 // ── Gradient palettes ────────────────────────────────────────────────────────
 static GRAD_GRUVBOX: [Rgb; 4] = [
-    rgb(184, 187, 38),  // green
-    rgb(250, 189, 47),  // yellow
-    rgb(254, 128, 25),  // orange
-    rgb(251, 73, 52),   // red
+    rgb(184, 187, 38), // green
+    rgb(250, 189, 47), // yellow
+    rgb(254, 128, 25), // orange
+    rgb(251, 73, 52),  // red
 ];
 static GRAD_NORD: [Rgb; 4] = [
     rgb(163, 190, 140), // aurora green
@@ -252,7 +252,10 @@ mod tests {
     #[test]
     fn all_themes_resolve() {
         for t in THEMES {
-            assert_eq!(index_by_name(t.name), Some(THEMES.iter().position(|x| x.name == t.name).unwrap()));
+            assert_eq!(
+                index_by_name(t.name),
+                Some(THEMES.iter().position(|x| x.name == t.name).unwrap())
+            );
         }
         assert_eq!(index_by_name("nope"), None);
     }

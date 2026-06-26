@@ -29,7 +29,9 @@ fn fill_dots(value: f64, max: f64, rows: usize) -> usize {
     if max <= 0.0 || value <= 0.0 || !value.is_finite() {
         return 0;
     }
-    ((value / max) * rows as f64).round().clamp(0.0, rows as f64) as usize
+    ((value / max) * rows as f64)
+        .round()
+        .clamp(0.0, rows as f64) as usize
 }
 
 /// Pick the `width*2` most recent samples, padding the left with zeros so the
@@ -116,7 +118,10 @@ pub fn mirror_graph(
     let max = max.max(f64::MIN_POSITIVE);
     let up_cols = columns(up, dot_cols);
     let down_cols = columns(down, dot_cols);
-    let up_h: Vec<usize> = up_cols.iter().map(|v| fill_dots(*v, max, half_rows)).collect();
+    let up_h: Vec<usize> = up_cols
+        .iter()
+        .map(|v| fill_dots(*v, max, half_rows))
+        .collect();
     let down_h: Vec<usize> = down_cols
         .iter()
         .map(|v| fill_dots(*v, max, half_rows))
@@ -174,7 +179,11 @@ pub fn meter_spans(pct: f32, width: usize, theme: &Theme) -> Vec<Span<'static>> 
     let rem = exact - full as f32;
     let mut spans = Vec::with_capacity(width);
     for i in 0..width {
-        let t = if width <= 1 { 1.0 } else { i as f32 / (width - 1) as f32 };
+        let t = if width <= 1 {
+            1.0
+        } else {
+            i as f32 / (width - 1) as f32
+        };
         if i < full {
             spans.push(Span::styled("█", Style::default().fg(theme.grad(t))));
         } else if i == full && rem > 0.05 {
@@ -237,7 +246,15 @@ mod tests {
     fn mirror_dimensions() {
         let a: Vec<f64> = (0..40).map(|i| i as f64).collect();
         let b: Vec<f64> = (0..40).map(|i| (40 - i) as f64).collect();
-        let lines = mirror_graph(&a, &b, 40.0, 15, 6, THEMES[0].net_down.color(), THEMES[0].net_up.color());
+        let lines = mirror_graph(
+            &a,
+            &b,
+            40.0,
+            15,
+            6,
+            THEMES[0].net_down.color(),
+            THEMES[0].net_up.color(),
+        );
         assert_eq!(lines.len(), 6);
         for l in &lines {
             assert_eq!(l.width(), 15);

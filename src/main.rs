@@ -10,9 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -192,7 +190,10 @@ fn run(terminal: &mut Tui, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| ui::draw(f, app))?;
 
-        let timeout = app.tick.checked_sub(last_tick.elapsed()).unwrap_or(Duration::ZERO);
+        let timeout = app
+            .tick
+            .checked_sub(last_tick.elapsed())
+            .unwrap_or(Duration::ZERO);
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => app.on_key(key),

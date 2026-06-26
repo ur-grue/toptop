@@ -204,13 +204,20 @@ impl App {
     fn sort_rows(&self, rows: &mut [ProcInfo]) {
         rows.sort_by(|a, b| {
             let ord = match self.sort {
-                SortField::Cpu => a.cpu.partial_cmp(&b.cpu).unwrap_or(std::cmp::Ordering::Equal),
-                SortField::Mem => a
-                    .mem_bytes
-                    .cmp(&b.mem_bytes),
+                SortField::Cpu => a
+                    .cpu
+                    .partial_cmp(&b.cpu)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                SortField::Mem => a.mem_bytes.cmp(&b.mem_bytes),
                 SortField::Pid => a.pid.cmp(&b.pid),
-                SortField::Name => a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()),
-                SortField::User => a.user.to_ascii_lowercase().cmp(&b.user.to_ascii_lowercase()),
+                SortField::Name => a
+                    .name
+                    .to_ascii_lowercase()
+                    .cmp(&b.name.to_ascii_lowercase()),
+                SortField::User => a
+                    .user
+                    .to_ascii_lowercase()
+                    .cmp(&b.user.to_ascii_lowercase()),
                 SortField::Time => a.run_time.cmp(&b.run_time),
             };
             if self.sort_desc {
@@ -241,14 +248,27 @@ impl App {
             list.sort_by(|&a, &b| {
                 let (pa, pb) = (&rows[a], &rows[b]);
                 let ord = match self.sort {
-                    SortField::Cpu => pa.cpu.partial_cmp(&pb.cpu).unwrap_or(std::cmp::Ordering::Equal),
+                    SortField::Cpu => pa
+                        .cpu
+                        .partial_cmp(&pb.cpu)
+                        .unwrap_or(std::cmp::Ordering::Equal),
                     SortField::Mem => pa.mem_bytes.cmp(&pb.mem_bytes),
                     SortField::Pid => pa.pid.cmp(&pb.pid),
-                    SortField::Name => pa.name.to_ascii_lowercase().cmp(&pb.name.to_ascii_lowercase()),
-                    SortField::User => pa.user.to_ascii_lowercase().cmp(&pb.user.to_ascii_lowercase()),
+                    SortField::Name => pa
+                        .name
+                        .to_ascii_lowercase()
+                        .cmp(&pb.name.to_ascii_lowercase()),
+                    SortField::User => pa
+                        .user
+                        .to_ascii_lowercase()
+                        .cmp(&pb.user.to_ascii_lowercase()),
                     SortField::Time => pa.run_time.cmp(&pb.run_time),
                 };
-                if self.sort_desc { ord.reverse() } else { ord }
+                if self.sort_desc {
+                    ord.reverse()
+                } else {
+                    ord
+                }
             });
         };
         sort_idx(&mut roots);

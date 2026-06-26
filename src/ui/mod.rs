@@ -91,10 +91,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled("  ", dim(theme)),
-        Span::styled(
-            &c.host.hostname,
-            Style::default().fg(theme.accent2.color()),
-        ),
+        Span::styled(&c.host.hostname, Style::default().fg(theme.accent2.color())),
         Span::styled(format!("  {}", truncate(&c.host.os, 28)), dim(theme)),
         Span::styled(format!("  kernel {}", c.host.kernel), dim(theme)),
         Span::styled(
@@ -108,10 +105,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
             ),
             Style::default().fg(theme.fg.color()),
         ),
-        Span::styled(
-            format!("  {} tasks, {} run", tasks, running),
-            dim(theme),
-        ),
+        Span::styled(format!("  {} tasks, {} run", tasks, running), dim(theme)),
     ];
     if let Some(bat) = &c.battery {
         let t = (bat.percent / 100.0).clamp(0.0, 1.0);
@@ -180,11 +174,13 @@ fn render_top(f: &mut Frame, area: Rect, app: &mut App) {
 
     render_cpu(f, cols[0], app);
 
-    let mid = Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)]).split(cols[1]);
+    let mid =
+        Layout::vertical([Constraint::Percentage(58), Constraint::Percentage(42)]).split(cols[1]);
     render_mem(f, mid[0], app);
     render_sensors(f, mid[1], app);
 
-    let right = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(cols[2]);
+    let right =
+        Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).split(cols[2]);
     render_net(f, right[0], app);
     render_disk(f, right[1], app);
 }
@@ -217,7 +213,11 @@ fn render_cpu(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::styled(format!("  {}", freq), Style::default().fg(theme.fg.color())),
         Span::styled(
-            format!("  {}c/{}t", cpu.per_core.len().min(app.collector.host.physical_cores), cpu.per_core.len()),
+            format!(
+                "  {}c/{}t",
+                cpu.per_core.len().min(app.collector.host.physical_cores),
+                cpu.per_core.len()
+            ),
             dim(theme),
         ),
     ]);
@@ -244,7 +244,10 @@ fn render_cpu(f: &mut Frame, area: Rect, app: &App) {
     if graph_h > 0 {
         let series: Vec<f64> = cpu.global_history.iter().copied().collect();
         let lines = graph::braille_graph(&series, 100.0, rest.width as usize, graph_h, theme);
-        let garea = Rect { height: graph_h as u16, ..rest };
+        let garea = Rect {
+            height: graph_h as u16,
+            ..rest
+        };
         render_lines(f, garea, lines);
     }
 
@@ -346,7 +349,13 @@ fn render_mem(f: &mut Frame, area: Rect, app: &App) {
             ..inner
         };
         let series: Vec<f64> = mem.used_history.iter().copied().collect();
-        let glines = graph::braille_graph(&series, 100.0, garea.width as usize, garea.height as usize, theme);
+        let glines = graph::braille_graph(
+            &series,
+            100.0,
+            garea.width as usize,
+            garea.height as usize,
+            theme,
+        );
         render_lines(f, garea, glines);
     }
 }
@@ -362,7 +371,9 @@ fn swap_meter(pct: f32, width: usize, theme: &Theme) -> Vec<Span<'static>> {
         } else {
             spans.push(Span::styled(
                 "░",
-                Style::default().fg(theme.dim.color()).add_modifier(Modifier::DIM),
+                Style::default()
+                    .fg(theme.dim.color())
+                    .add_modifier(Modifier::DIM),
             ));
         }
     }
@@ -420,11 +431,7 @@ fn render_net(f: &mut Frame, area: Rect, app: &App) {
     if graph_area.height > 0 {
         let down: Vec<f64> = net.down_history.iter().copied().collect();
         let up: Vec<f64> = net.up_history.iter().copied().collect();
-        let max = net
-            .down_history
-            .max()
-            .max(net.up_history.max())
-            .max(1024.0);
+        let max = net.down_history.max().max(net.up_history.max()).max(1024.0);
         let lines = graph::mirror_graph(
             &down,
             &up,
@@ -482,10 +489,7 @@ fn render_disk(f: &mut Frame, area: Rect, app: &App) {
             format!(" {:>3.0}% ", d.used_pct),
             Style::default().fg(theme.grad(d.used_pct / 100.0)),
         ));
-        spans.push(Span::styled(
-            short_bytes(d.total),
-            dim(theme),
-        ));
+        spans.push(Span::styled(short_bytes(d.total), dim(theme)));
         lines.push(Line::from(spans));
     }
     if lines.is_empty() {
@@ -537,7 +541,11 @@ fn render_sensors(f: &mut Frame, area: Rect, app: &App) {
 fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
     let theme = app.theme();
     let title = if app.filter.is_empty() {
-        format!("processes · {} ({})", app.sort.label(), if app.sort_desc { "▼" } else { "▲" })
+        format!(
+            "processes · {} ({})",
+            app.sort.label(),
+            if app.sort_desc { "▼" } else { "▲" }
+        )
     } else {
         format!("processes · filter:\"{}\"", app.filter)
     };
@@ -638,9 +646,7 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(1),
         Constraint::Min(10),
     ];
-    let table = Table::new(rows, widths)
-        .header(header)
-        .column_spacing(1);
+    let table = Table::new(rows, widths).header(header).column_spacing(1);
     f.render_widget(table, inner);
 }
 
@@ -725,7 +731,10 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     };
     let rect = centered(area, 72, 18);
     f.render_widget(Clear, rect);
-    let block = panel(&format!("process · {} ({})", truncate(&p.name, 28), p.pid), theme);
+    let block = panel(
+        &format!("process · {} ({})", truncate(&p.name, 28), p.pid),
+        theme,
+    );
     let inner = block.inner(rect);
     f.render_widget(block, rect);
     if inner.width == 0 {
@@ -750,18 +759,50 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
 
     let cpu = clamp_pct(p.cpu);
     let lines = vec![
-        row("PID / PPID", format!("{} / {}", p.pid, p.ppid.map(|v| v.to_string()).unwrap_or_else(|| "—".into())), theme.fg.color()),
+        row(
+            "PID / PPID",
+            format!(
+                "{} / {}",
+                p.pid,
+                p.ppid.map(|v| v.to_string()).unwrap_or_else(|| "—".into())
+            ),
+            theme.fg.color(),
+        ),
         row("User", p.user.clone(), theme.accent2.color()),
-        row("State", format!("{} ({})", p.status_long, p.status), theme.fg.color()),
+        row(
+            "State",
+            format!("{} ({})", p.status_long, p.status),
+            theme.fg.color(),
+        ),
         row("Threads", p.threads.to_string(), theme.fg.color()),
         row("CPU", format!("{:.1}%", p.cpu), theme.grad(cpu / 100.0)),
-        row("Memory", format!("{} ({:.1}%)", human_bytes(p.mem_bytes), p.mem_pct), theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0))),
+        row(
+            "Memory",
+            format!("{} ({:.1}%)", human_bytes(p.mem_bytes), p.mem_pct),
+            theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0)),
+        ),
         row("Virtual", human_bytes(p.virt), theme.fg.color()),
-        row("Disk R/W", format!("{} / {}", human_bytes(p.disk_read), human_bytes(p.disk_written)), theme.fg.color()),
+        row(
+            "Disk R/W",
+            format!(
+                "{} / {}",
+                human_bytes(p.disk_read),
+                human_bytes(p.disk_written)
+            ),
+            theme.fg.color(),
+        ),
         row("Started", started, theme.fg.color()),
         row("Run time", human_duration(p.run_time), theme.fg.color()),
-        row("Exe", truncate(if p.exe.is_empty() { "—" } else { &p.exe }, wrap), theme.fg.color()),
-        row("Cwd", truncate(if p.cwd.is_empty() { "—" } else { &p.cwd }, wrap), theme.fg.color()),
+        row(
+            "Exe",
+            truncate(if p.exe.is_empty() { "—" } else { &p.exe }, wrap),
+            theme.fg.color(),
+        ),
+        row(
+            "Cwd",
+            truncate(if p.cwd.is_empty() { "—" } else { &p.cwd }, wrap),
+            theme.fg.color(),
+        ),
         row("Command", truncate(&p.cmd, wrap), theme.dim.color()),
         Line::from(Span::styled(
             "Enter / Esc to close · K to signal",
@@ -887,10 +928,7 @@ fn render_confirm(f: &mut Frame, area: Rect, theme: &Theme, pk: &crate::app::Pen
                 Style::default().fg(theme.fg.color()),
             ),
         ]),
-        Line::from(Span::styled(
-            "[y] confirm    [n / Esc] cancel",
-            dim(theme),
-        )),
+        Line::from(Span::styled("[y] confirm    [n / Esc] cancel", dim(theme))),
     ];
     f.render_widget(
         Paragraph::new(Text::from(lines)).alignment(Alignment::Center),

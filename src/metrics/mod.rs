@@ -439,8 +439,11 @@ impl Collector {
                 });
             }
         }
-        self.sensors
-            .sort_by(|a, b| b.temp.partial_cmp(&a.temp).unwrap_or(std::cmp::Ordering::Equal));
+        self.sensors.sort_by(|a, b| {
+            b.temp
+                .partial_cmp(&a.temp)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 
     /// Number of running (non-sleeping) processes, for the header summary.

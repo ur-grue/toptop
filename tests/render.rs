@@ -18,7 +18,9 @@ fn key(code: KeyCode) -> KeyEvent {
 fn render_at(app: &mut App, w: u16, h: u16) {
     let backend = TestBackend::new(w, h);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    terminal.draw(|f| ui::draw(f, app)).expect("draw must not panic");
+    terminal
+        .draw(|f| ui::draw(f, app))
+        .expect("draw must not panic");
 }
 
 #[test]
