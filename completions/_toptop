@@ -1,0 +1,17 @@
+#compdef toptop
+# zsh completion for toptop
+# Install: place this file (named `_toptop`) in a directory on your $fpath.
+
+_toptop() {
+    _arguments -s \
+        '(-t --tick)'{-t,--tick}'[refresh interval in milliseconds]:milliseconds:' \
+        '--theme[color theme]:theme:(gruvbox nord dracula tokyonight matrix)' \
+        '--tree[start in process-tree view]' \
+        '--no-tree[start in flat process view]' \
+        '--list-themes[print available themes and exit]' \
+        '--snapshot[print a one-shot text snapshot and exit]' \
+        '(-h --help)'{-h,--help}'[show help and exit]' \
+        '(-V --version)'{-V,--version}'[show version and exit]'
+}
+
+_toptop "$@"

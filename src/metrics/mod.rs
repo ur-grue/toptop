@@ -11,7 +11,10 @@ use sysinfo::{
     ProcessStatus, ProcessesToUpdate, RefreshKind, Signal, System, UpdateKind, Users,
 };
 
+pub mod gpu;
+
 use crate::history::History;
+use gpu::{Gpu, GpuMonitor};
 
 /// Static-ish information about the host, captured once at startup.
 #[derive(Clone, Debug, Default)]
@@ -123,6 +126,7 @@ pub struct Collector {
     users: Users,
     refresh_kind: RefreshKind,
     proc_refresh: ProcessRefreshKind,
+    gpu_monitor: GpuMonitor,
     last_instant: Option<Instant>,
     history_len: usize,
 
@@ -139,6 +143,7 @@ pub struct Collector {
     last_disk_write: u64,
     pub procs: Vec<ProcInfo>,
     pub sensors: Vec<SensorInfo>,
+    pub gpus: Vec<Gpu>,
     pub battery: Option<Battery>,
     pub uptime: u64,
 }
@@ -198,6 +203,7 @@ impl Collector {
             users: Users::new_with_refreshed_list(),
             refresh_kind,
             proc_refresh,
+            gpu_monitor: GpuMonitor::new(),
             last_instant: None,
             history_len,
             host,
@@ -217,6 +223,7 @@ impl Collector {
             last_disk_write: 0,
             procs: Vec::new(),
             sensors: Vec::new(),
+            gpus: Vec::new(),
             battery: None,
             uptime: 0,
         };
@@ -249,6 +256,7 @@ impl Collector {
         self.refresh_disks(elapsed);
         self.refresh_procs();
         self.refresh_sensors();
+        self.gpus = self.gpu_monitor.snapshot();
         self.battery = read_battery();
     }
 

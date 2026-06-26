@@ -470,10 +470,37 @@ fn render_disk(f: &mut Frame, area: Rect, app: &App) {
         ),
     ]);
 
-    let parts = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(inner);
+    // When there's room, draw a mirrored read/write I/O graph below the summary.
+    let graph_h: u16 = if inner.height >= 8 { 3 } else { 0 };
+    let parts = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(graph_h),
+        Constraint::Min(0),
+    ])
+    .split(inner);
     render_lines(f, parts[0], vec![summary]);
 
-    let list = parts[1];
+    if graph_h > 0 {
+        let read: Vec<f64> = c.disk_read_history.iter().copied().collect();
+        let write: Vec<f64> = c.disk_write_history.iter().copied().collect();
+        let max = c
+            .disk_read_history
+            .max()
+            .max(c.disk_write_history.max())
+            .max(1024.0);
+        let lines = graph::mirror_graph(
+            &read,
+            &write,
+            max,
+            parts[1].width as usize,
+            parts[1].height as usize,
+            theme.disk_read.color(),
+            theme.disk_write.color(),
+        );
+        render_lines(f, parts[1], lines);
+    }
+
+    let list = parts[2];
     if list.height == 0 {
         return;
     }
@@ -502,14 +529,20 @@ fn render_disk(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_sensors(f: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
-    let block = panel("sensors", theme);
+    let gpus = &app.collector.gpus;
+    let sensors = &app.collector.sensors;
+    let title = if gpus.is_empty() {
+        "sensors"
+    } else {
+        "gpu · sensors"
+    };
+    let block = panel(title, theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {
         return;
     }
-    let sensors = &app.collector.sensors;
-    if sensors.is_empty() {
+    if gpus.is_empty() && sensors.is_empty() {
         render_lines(
             f,
             inner,
@@ -517,9 +550,45 @@ fn render_sensors(f: &mut Frame, area: Rect, app: &App) {
         );
         return;
     }
+
+    let cap = inner.height as usize;
     let mw = (inner.width as usize).saturating_sub(22).max(3);
     let mut lines: Vec<Line<'static>> = Vec::new();
-    for s in sensors.iter().take(inner.height as usize) {
+
+    // GPUs first — utilization meter, temperature, and VRAM usage.
+    for (i, g) in gpus.iter().enumerate() {
+        if lines.len() >= cap {
+            break;
+        }
+        let u = clamp_pct(g.util_pct);
+        let mut spans = vec![Span::styled(
+            format!("gpu{:<7}", i),
+            Style::default().fg(theme.accent2.color()),
+        )];
+        spans.extend(graph::meter_spans(u, mw, theme));
+        spans.push(Span::styled(
+            format!(" {:>3.0}% {:>3.0}°C", u, g.temp),
+            Style::default().fg(theme.grad(u / 100.0)),
+        ));
+        lines.push(Line::from(spans));
+        if lines.len() < cap {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {} · vram {} / {}",
+                    truncate(&g.name, (inner.width as usize).saturating_sub(24)),
+                    human_bytes(g.mem_used),
+                    human_bytes(g.mem_total)
+                ),
+                dim(theme),
+            )));
+        }
+    }
+
+    // Then temperature sensors.
+    for s in sensors {
+        if lines.len() >= cap {
+            break;
+        }
         let scale = s.critical.or(s.high).unwrap_or(100.0).max(1.0);
         let t = (s.temp / scale).clamp(0.0, 1.0);
         let mut spans = vec![Span::styled(

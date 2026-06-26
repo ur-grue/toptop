@@ -41,7 +41,10 @@ single ~1 MB binary with no runtime dependencies.
     `SIGUSR1`, `SIGUSR2`) behind a confirmation prompt.
   - Full **mouse support**: click to select, scroll wheel to navigate.
 - **Network** per‑interface throughput with a mirrored rx/tx braille graph and totals.
-- **Disk** per‑mount usage meters plus aggregate read/write I/O rates.
+- **Disk** per‑mount usage meters plus a mirrored read/write I/O braille graph.
+- **GPU** (NVIDIA) utilization, temperature and VRAM — polled on a background
+  thread via `nvidia-smi` so it never blocks the UI; the panel simply hides when
+  no GPU is present.
 - **Sensors** — temperatures scaled against each sensor's critical threshold.
 - **Five themes** — `gruvbox`, `nord`, `dracula`, `tokyonight`, `matrix` — cycle live with `p`.
 - **Live header** with a wall clock, uptime, load average, task counts, and a
@@ -122,6 +125,21 @@ cargo run -- --snapshot             # one-shot textual snapshot
 The render tests drive the full UI through ratatui's headless `TestBackend` across terminal
 sizes from 1×1 upward, so layout regressions and geometry panics are caught in CI without a
 real terminal.
+
+## Shell completions
+
+Completion scripts for bash, zsh, and fish live in [`completions/`](completions/):
+
+```bash
+# bash
+source completions/toptop.bash      # or copy to /etc/bash_completion.d/
+
+# zsh — place `_toptop` somewhere on your $fpath, e.g.
+cp completions/_toptop ~/.zfunc/ && echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
+
+# fish
+cp completions/toptop.fish ~/.config/fish/completions/
+```
 
 ## License
 
