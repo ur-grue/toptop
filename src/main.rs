@@ -42,6 +42,7 @@ OPTIONS:
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
+        --serve-metrics [ADDR]  Run a Prometheus endpoint (default 127.0.0.1:9709)
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -56,6 +57,7 @@ fn main() -> Result<()> {
     let mut start_ai = false;
     let mut remote_hosts: Vec<String> = Vec::new();
     let mut remote_cmd = "toptop --export json".to_string();
+    let mut serve_addr: Option<String> = None;
 
     let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
@@ -103,6 +105,14 @@ fn main() -> Result<()> {
             "--remote-cmd" => {
                 remote_cmd = args.next().context("--remote-cmd requires a command")?;
             }
+            "--serve-metrics" => {
+                // Optional address argument; defaults to localhost:9709.
+                let addr = match args.peek() {
+                    Some(a) if !a.starts_with('-') => args.next().unwrap(),
+                    _ => "127.0.0.1:9709".to_string(),
+                };
+                serve_addr = Some(addr);
+            }
             "--snapshot" => snapshot = true,
             "--export" => {
                 // Optional format argument: `json` (default) or `prometheus`.
@@ -127,6 +137,11 @@ fn main() -> Result<()> {
 
     if let Some(format) = export {
         return run_export(&cfg, format);
+    }
+
+    if let Some(addr) = serve_addr {
+        toptop::serve::run(&addr, &cfg).context("metrics server failed")?;
+        return Ok(());
     }
 
     if snapshot {

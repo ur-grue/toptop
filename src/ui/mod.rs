@@ -126,6 +126,22 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
             Style::default().fg(theme.grad(t)),
         ));
     }
+    if !app.alerts.is_empty() {
+        let crit = matches!(
+            crate::alerts::worst_level(&app.alerts),
+            Some(crate::alerts::Level::Crit)
+        );
+        spans.push(Span::styled(
+            format!(
+                "  ⚠ {} alert{}",
+                app.alerts.len(),
+                if app.alerts.len() == 1 { "" } else { "s" }
+            ),
+            Style::default()
+                .fg(theme.grad(if crit { 1.0 } else { 0.7 }))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if app.paused {
         spans.push(Span::styled(
             "  ⏸ PAUSED",
@@ -988,6 +1004,27 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     let bw = (inner.width as usize).saturating_sub(26).clamp(6, 30);
+
+    // Firing alerts get top billing — this is the inference health banner.
+    if !app.alerts.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "⚠ ALERTS",
+            Style::default()
+                .fg(theme.grad(1.0))
+                .add_modifier(Modifier::BOLD),
+        )));
+        for a in &app.alerts {
+            let hot = a.level == crate::alerts::Level::Crit;
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  [{}] ", a.level.label()),
+                    Style::default().fg(theme.grad(if hot { 1.0 } else { 0.7 })),
+                ),
+                Span::styled(a.message.clone(), Style::default().fg(theme.fg.color())),
+            ]));
+        }
+        lines.push(Line::from(Span::raw("")));
+    }
 
     if c.gpus.is_empty() {
         lines.push(Line::from(Span::styled(

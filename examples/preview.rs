@@ -60,6 +60,7 @@ fn main() {
                 ttft_ms: Some(180.0),
                 gpu_offload_pct: None,
             }];
+            app.alerts = toptop::alerts::evaluate(&app.collector, &app.alert_cfg);
         }
         "detail" => app.show_detail = true,
         "signal" => {

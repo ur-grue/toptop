@@ -6,6 +6,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, Mou
 use ratatui::layout::Rect;
 use sysinfo::Signal;
 
+use crate::alerts::{self, Alert, AlertConfig};
 use crate::config::Config;
 use crate::metrics::{Collector, Connection, ProcInfo};
 use crate::theme::{Theme, THEMES};
@@ -154,6 +155,9 @@ pub struct App {
     pub conn_offset: usize,
     /// Visible row capacity of the connections view, captured at render time.
     pub conn_rows: usize,
+    /// Currently-firing threshold alerts (recomputed each tick).
+    pub alerts: Vec<Alert>,
+    pub alert_cfg: AlertConfig,
     pub status: Option<(String, Instant)>,
 }
 
@@ -188,6 +192,8 @@ impl App {
             connections: Vec::new(),
             conn_offset: 0,
             conn_rows: 0,
+            alerts: Vec::new(),
+            alert_cfg: AlertConfig::default(),
             status: None,
         };
         app.rebuild_proc_view();
@@ -218,6 +224,7 @@ impl App {
             self.collector.refresh();
         }
         self.rebuild_proc_view();
+        self.alerts = alerts::evaluate(&self.collector, &self.alert_cfg);
         if self.show_conn {
             self.refresh_connections();
         }

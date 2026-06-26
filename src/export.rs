@@ -5,6 +5,7 @@
 //! It's also handy on its own for scripts, dashboards, and alerting. The
 //! serializer is hand-rolled to keep `toptop` dependency-free.
 
+use crate::alerts::{self, AlertConfig};
 use crate::metrics::Collector;
 
 /// Escape a string for embedding in a JSON document.
@@ -338,6 +339,20 @@ pub fn to_prometheus(c: &Collector) -> String {
             s.push_str(&g("requests_running", sv.running));
             s.push_str(&g("requests_waiting", sv.waiting));
             s.push_str(&g("ttft_ms", sv.ttft_ms));
+        }
+    }
+
+    // Firing alerts — one gauge per active alert so Alertmanager can page.
+    let alerts = alerts::evaluate(c, &AlertConfig::default());
+    if !alerts.is_empty() {
+        s.push_str("# HELP toptop_alert A firing alert (1 = active).\n# TYPE toptop_alert gauge\n");
+        for a in &alerts {
+            s.push_str(&format!(
+                "toptop_alert{{key=\"{}\",detail=\"{}\",level=\"{}\"}} 1\n",
+                a.key,
+                plabel(&a.detail),
+                a.level.label()
+            ));
         }
     }
 

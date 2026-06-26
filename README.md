@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-62%20green-success)
+![Tests](https://img.shields.io/badge/tests-65%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -26,6 +26,9 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 
 ```text
 ╭ AI · local-LLM GPU view · Esc/a to close ──────────────────────────────────╮
+│⚠ ALERTS                                                                    │
+│  [warn] gpu0 VRAM 92% — risk of spilling to RAM                            │
+│                                                                            │
 │gpu0  NVIDIA GeForce RTX 4090   290/450W  72°C                              │
 │  compute   █████████▎░░░░░░░░░░░░░░░░░░░░  31%                             │
 │  mem b/w   ███████████████████████▍░░░░░░  78%                             │
@@ -38,7 +41,6 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 │                                                                            │
 │GPU processes (by VRAM)                                                     │
 │      PID       VRAM   CPU%  PROCESS                                        │
-│      559   22.0 GiB    0.0  Bun Pool 0                                     │
 ╰────────────────────────────────────────────────────────────────────────────╯
 ```
 
@@ -102,7 +104,8 @@ sensors, battery, six themes — all in a single **~1 MB binary with zero runtim
 | 🤖 **AI / local‑LLM view** | compute **vs. memory‑bandwidth** util, VRAM spill warning, throttle flag, per‑process VRAM, tokens/sec/watt, serving‑vs‑training detection (press `a`) |
 | 🔭 **Server auto‑discovery** | finds listening vLLM / llama.cpp / Ollama / TGI and scrapes live **tokens/sec**, KV‑cache, queue depth, TTFT — no config |
 | 🎮 **Multi‑vendor GPU** | NVIDIA (`nvidia-smi`) **and** AMD/Intel (`sysfs`), polled off‑thread — util, bandwidth, VRAM, power, temp, throttle |
-| 📡 **Export & scrape** | `--export json` and `--export prometheus` — wire toptop into Grafana as an inference metrics source |
+| 📡 **Prometheus exporter** | `--serve-metrics` runs a `/metrics` endpoint (or `--export prometheus`) — scrape tokens/sec, VRAM, throttle into Grafana |
+| 🚨 **Threshold alerts** | VRAM‑spill, GPU‑throttle, KV‑cache and queue‑backlog alerts — a red TUI banner **and** `toptop_alert` gauges for Alertmanager |
 | 🛰️ **Multi‑host fleet** | `--remote h1,h2,…` aggregates a cluster over SSH — Σ tokens/sec, Σ VRAM, per‑host status |
 
 **As a general system monitor**
@@ -170,8 +173,10 @@ machine‑readable JSON or **Prometheus** exposition text and scrape it into Gra
 VictoriaMetrics to chart tokens/sec, VRAM pressure, throttle events and queue depth over time:
 
 ```bash
-toptop --export json          # full snapshot incl. GPU bandwidth/power + server tokens/sec
-toptop --export prometheus    # Prometheus text format for Grafana / VictoriaMetrics
+toptop --export json          # one-shot snapshot (GPU bandwidth/power + server tokens/sec)
+toptop --export prometheus    # one-shot Prometheus text
+toptop --serve-metrics        # long-running /metrics endpoint on 127.0.0.1:9709
+toptop --serve-metrics 0.0.0.0:9709   # bind elsewhere
 ```
 
 ```text
@@ -179,10 +184,14 @@ toptop --export prometheus    # Prometheus text format for Grafana / VictoriaMet
 toptop_gpu_mem_bandwidth_percent{gpu="0",name="NVIDIA GeForce RTX 4090"} 78.00
 # TYPE toptop_inference_tokens_per_second gauge
 toptop_inference_tokens_per_second{runtime="vLLM",port="8000",model="meta-llama/Llama-3-8B"} 83.40
-toptop_gpu_throttled{gpu="0",name="NVIDIA GeForce RTX 4090"} 0
+# TYPE toptop_alert gauge
+toptop_alert{key="vram_spill",detail="gpu0",level="warn"} 1
 ```
 
-The same JSON is the building block for the multi‑host fleet view below.
+**Threshold alerts** fire on the things that actually hurt local inference — VRAM about to
+spill, GPU throttling, KV‑cache saturation, request‑queue backlog. They show as a red banner in
+the TUI (top of the `a` view) **and** as `toptop_alert{…}` gauges, so you can page on them with
+Prometheus Alertmanager. The same JSON powers the multi‑host fleet view below.
 
 ## 🔒 What it accesses
 
@@ -285,6 +294,7 @@ OPTIONS:
         --list-themes    Print available themes and exit
         --snapshot       Print a one‑shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
+        --serve-metrics [ADDR]  Run a Prometheus /metrics endpoint (default 127.0.0.1:9709)
     -h, --help           Show help
     -V, --version        Show version
 ```
@@ -325,6 +335,8 @@ emitted as true 24‑bit RGB so meters and graphs interpolate smoothly on any mo
 | `metrics::ai` | local‑AI workload taxonomy (serving vs. training runtimes) |
 | `metrics::infer` | inference‑server discovery + Prometheus/Ollama scraping (tokens/sec) |
 | `metrics::netconn` | `/proc/net/*` parsing and socket→PID mapping |
+| `alerts` | threshold rules (VRAM spill / throttle / KV / queue) → firing alerts |
+| `export` + `serve` | JSON & Prometheus serializers + the `/metrics` HTTP endpoint |
 | `json` + `fleet` | dependency‑free JSON parser + multi‑host SSH aggregation |
 | `history` | fixed‑capacity ring buffer feeding the graphs |
 | `theme` | themes and the truecolor gradient engine |
