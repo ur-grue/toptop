@@ -31,7 +31,7 @@ USAGE:
 
 OPTIONS:
     -t, --tick <MS>      Refresh interval in milliseconds (100-60000)
-        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix)
+        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk)
         --tree           Start in process-tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local-LLM GPU view on launch

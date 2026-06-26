@@ -63,13 +63,38 @@
 | 🔌 **Connections inspector** | live TCP/UDP table mapping sockets → owning process (press `n`) |
 | 🗄️ **Disk panel** | per‑mount usage meters plus a mirrored read/write I/O graph |
 | 🎮 **GPU monitoring** | NVIDIA (`nvidia-smi`) **and** AMD/Intel (`sysfs`), polled off‑thread |
+| 🤖 **AI / local‑LLM view** | compute **vs. memory‑bandwidth** util, VRAM spill warning, per‑process VRAM, throttle flag, and inference‑runtime detection (press `a`) |
 | 🌡️ **Sensors & battery** | temperatures scaled to each critical threshold; battery in the header |
-| 🎨 **Five themes** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix`, cycle live with `p` |
+| 🎨 **Six themes** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk`, cycle live with `p` |
 | 🧩 **Saveable layouts** | `full` / `cpu` / `process` presets, cycled with `L` and persisted |
 | 🕐 **Live header** | wall clock, uptime, load average, task counts, battery |
 | 📐 **Adaptive layout** | reflows cleanly from a 250‑column desktop down to a tiny pane |
 | 🪶 **Tiny & safe** | ~1 MB binary, no runtime deps, restores your terminal even on panic |
 | 🤖 **Headless mode** | `--snapshot` prints a one‑shot textual report for scripts & dashboards |
+
+## 🤖 For local‑LLM / AI engineers
+
+Press **`a`** (or launch with **`--ai`**) for a view built around the question
+*"why is my model slow?"* — the metrics a bare `nvidia-smi` doesn't make obvious:
+
+- **Compute vs. memory‑bandwidth utilization.** Once a model fits in VRAM,
+  token generation is almost always **bandwidth**‑bound, not compute‑bound — so
+  toptop shows `utilization.memory` as its own meter next to core %. A GPU at
+  "30% utilization" that's actually saturating memory bandwidth is your bottleneck.
+- **VRAM headroom with a spill warning.** VRAM is a hard wall: cross it and your
+  runtime offloads layers to system RAM for a **5–20× slowdown**. toptop colors
+  the VRAM meter by pressure and warns *before* you spill.
+- **Per‑process VRAM.** See exactly which PID is holding GPU memory — catch a
+  model "squatting" on VRAM (`keep_alive`) or confirm your server is resident.
+- **Power vs. limit + throttle flag.** Thermal/power throttling silently drops
+  tokens/sec; toptop reads the driver's throttle reasons and flags it.
+- **Inference‑runtime detection.** Ollama, llama.cpp, vLLM, SGLang, TGI,
+  KoboldCpp, ExLlama, MLX, LocalAI and friends are recognized and listed with
+  their CPU, RAM and VRAM — including **CPU‑only** inference when there's no GPU.
+
+Pipe it anywhere with `toptop --export json` (includes GPU bandwidth/power/throttle
+and GPU processes) — the building block for multi‑host fleet monitoring of an
+inference cluster.
 
 ## 🚀 Install
 
@@ -117,11 +142,13 @@ toptop [OPTIONS]
 
 OPTIONS:
     -t, --tick <MS>      Refresh interval in milliseconds (100‑60000)
-        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix)
+        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk)
         --tree           Start in process‑tree view
         --no-tree        Start in flat process view
+        --ai             Open the AI / local‑LLM GPU view on launch
         --list-themes    Print available themes and exit
         --snapshot       Print a one‑shot text snapshot and exit (no TUI)
+        --export json    Print a machine‑readable JSON snapshot and exit
     -h, --help           Show help
     -V, --version        Show version
 ```
@@ -132,21 +159,21 @@ OPTIONS:
 |-----|--------|-----|--------|
 | `↑`/`↓` `k`/`j` | move selection | `t` | toggle process tree |
 | `PgUp`/`PgDn` | page up / down | `e` | toggle per‑core CPU meters |
-| `Home`/`End` `g`/`G` | first / last | `n` | network connections |
-| `Enter` | process detail view | `L` | cycle layout preset |
-| `s` | cycle sort column | `p` / `P` | next / previous theme |
-| `i` | invert sort order | `+` / `-` | faster / slower refresh |
-| click header | sort by column | `space` | pause / resume |
-| `/` | filter processes | `?` / `F1` | help overlay |
-| `K` / `F9` | signal menu | `Del` | terminate (SIGTERM) |
-| `x` | kill (SIGKILL) | `q` / `Ctrl‑C` | quit |
-| `Esc` | close overlay / clear filter / quit | | |
+| `Home`/`End` `g`/`G` | first / last | `a` | AI / local‑LLM GPU view |
+| `Enter` | process detail view | `n` | network connections |
+| `s` | cycle sort column | `L` | cycle layout preset |
+| `i` | invert sort order | `p` / `P` | next / previous theme |
+| click header | sort by column | `+` / `-` | faster / slower refresh |
+| `/` | filter processes | `space` | pause / resume |
+| `K` / `F9` | signal menu | `?` / `F1` | help overlay |
+| `Del` | terminate (SIGTERM) | `x` | kill (SIGKILL) |
+| `Esc` | close overlay / clear filter / quit | `q` / `Ctrl‑C` | quit |
 
 ## 🎨 Themes
 
 Cycle live with `p` / `P`, or launch with `--theme <name>`:
 
-`gruvbox` &nbsp;·&nbsp; `nord` &nbsp;·&nbsp; `dracula` &nbsp;·&nbsp; `tokyonight` &nbsp;·&nbsp; `matrix`
+`gruvbox` &nbsp;·&nbsp; `nord` &nbsp;·&nbsp; `dracula` &nbsp;·&nbsp; `tokyonight` &nbsp;·&nbsp; `matrix` &nbsp;·&nbsp; `cyberpunk`
 
 Each theme defines a full semantic palette **and** a load gradient (green → yellow → red),
 emitted as true 24‑bit RGB so meters and graphs interpolate smoothly on any modern terminal.

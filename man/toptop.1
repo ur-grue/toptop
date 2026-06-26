@@ -21,13 +21,19 @@ terminal down to a tiny pane.
 Refresh interval in milliseconds (100\(en60000).
 .TP
 .BR \-\-theme " " \fINAME\fR
-Color theme: \fIgruvbox\fR, \fInord\fR, \fIdracula\fR, \fItokyonight\fR, or \fImatrix\fR.
+Color theme: \fIgruvbox\fR, \fInord\fR, \fIdracula\fR, \fItokyonight\fR, \fImatrix\fR, or \fIcyberpunk\fR.
 .TP
 .B \-\-tree
 Start in process-tree view.
 .TP
 .B \-\-no\-tree
 Start in flat process view.
+.TP
+.B \-\-ai
+Open the AI / local-LLM GPU view on launch.
+.TP
+.B \-\-export " " json
+Print a machine-readable JSON snapshot and exit (no TUI).
 .TP
 .B \-\-list\-themes
 Print available themes and exit.
@@ -53,6 +59,10 @@ Jump to first / last.
 .TP
 .B Enter
 Toggle the process detail view.
+.TP
+.B a
+Toggle the AI / local-LLM GPU view (utilization vs. memory bandwidth, VRAM
+headroom, per-process VRAM, throttle, and inference-runtime detection).
 .TP
 .B n
 Open the network-connections inspector.

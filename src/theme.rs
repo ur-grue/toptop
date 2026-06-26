@@ -121,6 +121,13 @@ static GRAD_MATRIX: [Rgb; 4] = [
     rgb(57, 255, 20),
     rgb(180, 255, 120),
 ];
+// Cyber Pixel-inspired: electric cyan → purple → neon magenta → hot pink.
+static GRAD_CYBER: [Rgb; 4] = [
+    rgb(0, 240, 255),  // electric cyan
+    rgb(123, 97, 255), // electric purple
+    rgb(255, 46, 151), // neon magenta
+    rgb(255, 41, 90),  // hot pink-red
+];
 
 /// All themes, in cycle order.
 pub static THEMES: &[Theme] = &[
@@ -213,6 +220,24 @@ pub static THEMES: &[Theme] = &[
         disk_write: rgb(0, 160, 0),
         selection: rgb(0, 50, 0),
         gradient: &GRAD_MATRIX,
+    },
+    Theme {
+        name: "cyberpunk",
+        fg: rgb(220, 235, 255),
+        bg: Some(rgb(13, 6, 26)), // deep near-black violet
+        dim: rgb(110, 92, 160),
+        accent: rgb(255, 46, 151), // neon magenta
+        accent2: rgb(0, 240, 255), // electric cyan
+        border: rgb(58, 42, 93),
+        border_focus: rgb(255, 46, 151),
+        mem: rgb(0, 240, 255),
+        swap: rgb(178, 102, 255),
+        net_down: rgb(10, 255, 157), // neon green
+        net_up: rgb(249, 240, 2),    // neon yellow
+        disk_read: rgb(0, 240, 255),
+        disk_write: rgb(255, 46, 151),
+        selection: rgb(36, 23, 52),
+        gradient: &GRAD_CYBER,
     },
 ];
 
