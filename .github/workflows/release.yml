@@ -1,0 +1,46 @@
+name: Release
+
+# Build a release binary tarball and a .deb, then attach them to the GitHub
+# Release whenever a v* tag is pushed.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build & publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release --locked
+
+      - name: Package tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PKG="toptop-${VERSION}-x86_64-linux"
+          mkdir -p "dist/${PKG}"
+          cp target/release/toptop "dist/${PKG}/"
+          cp README.md LICENSE man/toptop.1 "dist/${PKG}/"
+          cp -r completions "dist/${PKG}/"
+          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+
+      - name: Build .deb
+        run: |
+          cargo install cargo-deb --locked
+          cargo deb --no-build --output dist/
+
+      - name: Publish to the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.deb
+          generate_release_notes: true

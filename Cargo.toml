@@ -1,0 +1,54 @@
+[package]
+name = "toptop"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.82"
+description = "A gorgeous, feature-rich terminal system monitor — an htop/btop alternative with high-resolution braille graphs, truecolor gradient meters, an interactive process table, and switchable themes."
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/ur-grue/toptop"
+homepage = "https://github.com/ur-grue/toptop"
+authors = ["The toptop authors"]
+keywords = ["system-monitor", "tui", "gpu", "llm", "htop"]
+categories = ["command-line-utilities"]
+exclude = ["/.github", "/packaging", "/man", "/completions"]
+
+[[bin]]
+name = "toptop"
+path = "src/main.rs"
+
+# Debian/Ubuntu packaging metadata, consumed by `cargo deb`.
+# Build a .deb with:  cargo install cargo-deb && cargo deb
+[package.metadata.deb]
+maintainer = "The toptop authors <toptop@example.com>"
+copyright = "2026, The toptop authors"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+toptop is an htop/btop-class terminal system monitor: high-resolution braille \
+graphs, truecolor gradient meters, an interactive process table with tree view, \
+per-process I/O, a signal menu, a network-connections inspector, GPU and sensor \
+panels, and switchable themes — in a single small binary."""
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/toptop", "usr/bin/", "755"],
+    ["man/toptop.1", "usr/share/man/man1/", "644"],
+    ["completions/toptop.bash", "usr/share/bash-completion/completions/toptop", "644"],
+    ["completions/_toptop", "usr/share/zsh/vendor-completions/_toptop", "644"],
+    ["completions/toptop.fish", "usr/share/fish/vendor_completions.d/toptop.fish", "644"],
+    ["README.md", "usr/share/doc/toptop/README.md", "644"],
+]
+
+[dependencies]
+ratatui = "0.30"
+crossterm = "0.29"
+sysinfo = "0.38"
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
