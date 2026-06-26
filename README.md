@@ -24,6 +24,11 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 
 **The local‑inference view (press `a`) — the numbers `nvidia-smi` doesn't show you:**
 
+<img src="assets/ai-demo.svg" alt="toptop AI view — live tokens/sec, the memory-bandwidth bar pulsing, VRAM filling to red, spill alert firing" width="100%">
+
+<details>
+<summary>📄 text version (what it looks like in your terminal)</summary>
+
 ```text
 ╭ AI · local-LLM GPU view · Esc/a to close ──────────────────────────────────╮
 │⚠ ALERTS                                                                    │
@@ -43,6 +48,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 │      PID       VRAM   CPU%  PROCESS                                        │
 ╰────────────────────────────────────────────────────────────────────────────╯
 ```
+</details>
 
 > Local LLMs are **memory‑bandwidth bound** once the model is resident, so a GPU at "31% util" can
 > still be your bottleneck. toptop shows **compute vs. bandwidth** side by side, warns **before**
@@ -353,6 +359,7 @@ cargo run --example preview 120 40  # render one frame as plain text
 cargo run --example fleet_preview   # render the fleet dashboard with sample hosts
 cargo run -- --snapshot             # one-shot textual snapshot
 python3 scripts/make_banner.py      # regenerate the pixel-art banner (assets/banner.svg)
+python3 scripts/make_ai_demo.py     # regenerate the animated AI-view demo (assets/ai-demo.svg)
 ```
 
 The render tests drive the **full UI** through ratatui's headless `TestBackend` across
