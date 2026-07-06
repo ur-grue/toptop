@@ -7,6 +7,10 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    # Pushing a branch named release/vX.Y.Z also cuts release vX.Y.Z — the
+    # workflow's token creates the tag at that commit (for environments whose
+    # git remote blocks direct tag pushes).
+    branches: ["release/v*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -29,9 +33,15 @@ jobs:
       - name: Build release binary
         run: cargo build --release --locked
 
+      - name: Resolve release tag
+        id: tag
+        env:
+          RAW: ${{ inputs.tag || github.ref_name }}
+        run: echo "tag=${RAW#release/}" >> "$GITHUB_OUTPUT"
+
       - name: Package tarball
         env:
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           PKG="toptop-${VERSION}-x86_64-linux"
@@ -49,7 +59,7 @@ jobs:
       - name: Publish to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: |
             dist/*.tar.gz
             dist/*.deb
