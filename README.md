@@ -255,27 +255,26 @@ cargo build --release
 ./target/release/toptop          # or: cargo install --path .
 ```
 
-**Homebrew** (via tap):
+**Debian / Ubuntu** (`.deb` from the [v1.0.0 release](https://github.com/ur-grue/toptop/releases/latest)):
 
 ```bash
-brew install ur-grue/tap/toptop
-# before a tagged release is published, install the tip of main:
-brew install --HEAD ur-grue/tap/toptop
+wget https://github.com/ur-grue/toptop/releases/download/v1.0.0/toptop_1.0.0-1_amd64.deb
+sudo apt install ./toptop_1.0.0-1_amd64.deb   # installs binary, man page, completions
 ```
 
-**Debian / Ubuntu** (`.deb`):
+**Binary tarball** (x86_64 Linux):
 
 ```bash
-# grab toptop_*_amd64.deb from the GitHub Releases page, then:
-sudo apt install ./toptop_1.0.0-1_amd64.deb
-# build it yourself from a checkout:
-cargo install cargo-deb && cargo deb     # writes target/debian/toptop_*.deb
+curl -L https://github.com/ur-grue/toptop/releases/download/v1.0.0/toptop-1.0.0-x86_64-linux.tar.gz | tar xz
+./toptop-1.0.0-x86_64-linux/toptop
 ```
 
-> **Status:** `brew` and `apt` install from a published tap / release. Pushing a
-> `v*` tag triggers [the release workflow](.github/workflows/release.yml), which
-> builds the binary tarball and `.deb` and attaches them to the GitHub Release;
-> the [Homebrew formula](packaging/homebrew/toptop.rb) is ready to drop into a tap.
+**Homebrew** (via tap — the [formula](packaging/homebrew/toptop.rb) is pinned to v1.0.0):
+
+```bash
+brew install ur-grue/tap/toptop      # once the tap repo is published
+brew install --HEAD ur-grue/tap/toptop   # or build the tip of main
+```
 
 ### Platform support
 

@@ -4,23 +4,17 @@
 #
 #     brew install ur-grue/tap/toptop
 #
-# Until a tagged release tarball + sha256 are published you can install the tip
-# of the default branch directly:
+# The bleeding edge is also available:
 #
 #     brew install --HEAD ur-grue/tap/toptop
-#
-# To cut a stable release, push a git tag (e.g. v1.0.0), then update `url` to the
-# generated tarball and fill in `sha256` (shown by `brew fetch`/`shasum -a 256`).
 class Toptop < Formula
-  desc "Gorgeous, feature-rich terminal system monitor (htop/btop alternative)"
+  desc "Local-inference observability for the terminal (htop/btop-class monitor)"
   homepage "https://github.com/ur-grue/toptop"
   license "GPL-3.0-or-later"
   head "https://github.com/ur-grue/toptop.git", branch: "main"
 
-  # Stable release (uncomment and fill in once a tag is published):
-  # url "https://github.com/ur-grue/toptop/archive/refs/tags/v1.0.0.tar.gz"
-  # sha256 "0000000000000000000000000000000000000000000000000000000000000000"
-  version "1.0.0"
+  url "https://github.com/ur-grue/toptop/archive/refs/tags/v1.0.0.tar.gz"
+  sha256 "9e48fab8c5f34a66ce3e4dd2f5645c636e0d19e5fe3505525c7bc7bf71d1d210"
 
   depends_on "rust" => :build
 
