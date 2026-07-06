@@ -1,6 +1,7 @@
 # Homebrew formula for toptop. The main repo doubles as its own tap:
 #
 #     brew tap ur-grue/toptop https://github.com/ur-grue/toptop
+#     brew trust ur-grue/toptop     # one-time third-party-tap approval
 #     brew install toptop
 #
 # The bleeding edge is also available with `brew install --HEAD toptop`.

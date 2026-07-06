@@ -273,6 +273,7 @@ curl -L https://github.com/ur-grue/toptop/releases/download/v1.0.0/toptop-1.0.0-
 
 ```bash
 brew tap ur-grue/toptop https://github.com/ur-grue/toptop
+brew trust ur-grue/toptop            # one-time: Homebrew requires approving third-party taps
 brew install toptop                  # or: brew install --HEAD toptop for the tip of main
 ```
 
