@@ -11,8 +11,8 @@ class Toptop < Formula
   license "GPL-3.0-or-later"
   head "https://github.com/ur-grue/toptop.git", branch: "main"
 
-  url "https://github.com/ur-grue/toptop/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "9e48fab8c5f34a66ce3e4dd2f5645c636e0d19e5fe3505525c7bc7bf71d1d210"
+  url "https://github.com/ur-grue/toptop/archive/refs/tags/v1.0.1.tar.gz"
+  sha256 "a3ba36baaa84c25583f7787df9bd74ecabb4b78321364bedb12be58e18f10a36"
 
   depends_on "rust" => :build
 

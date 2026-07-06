@@ -269,7 +269,7 @@ curl -L https://github.com/ur-grue/toptop/releases/download/v1.0.1/toptop-1.0.1-
 ./toptop-1.0.1-x86_64-linux/toptop
 ```
 
-**Homebrew** (this repo is its own tap — the [formula](Formula/toptop.rb) is pinned to v1.0.0):
+**Homebrew** (this repo is its own tap — the [formula](Formula/toptop.rb) is pinned to v1.0.1):
 
 ```bash
 brew tap ur-grue/toptop https://github.com/ur-grue/toptop
