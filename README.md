@@ -269,11 +269,11 @@ curl -L https://github.com/ur-grue/toptop/releases/download/v1.0.0/toptop-1.0.0-
 ./toptop-1.0.0-x86_64-linux/toptop
 ```
 
-**Homebrew** (via tap — the [formula](packaging/homebrew/toptop.rb) is pinned to v1.0.0):
+**Homebrew** (this repo is its own tap — the [formula](Formula/toptop.rb) is pinned to v1.0.0):
 
 ```bash
-brew install ur-grue/tap/toptop      # once the tap repo is published
-brew install --HEAD ur-grue/tap/toptop   # or build the tip of main
+brew tap ur-grue/toptop https://github.com/ur-grue/toptop
+brew install toptop                  # or: brew install --HEAD toptop for the tip of main
 ```
 
 ### Platform support

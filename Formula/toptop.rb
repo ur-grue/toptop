@@ -1,12 +1,9 @@
-# Homebrew formula for toptop.
+# Homebrew formula for toptop. The main repo doubles as its own tap:
 #
-# Intended to live in a tap (e.g. `ur-grue/homebrew-tap`) so users can:
+#     brew tap ur-grue/toptop https://github.com/ur-grue/toptop
+#     brew install toptop
 #
-#     brew install ur-grue/tap/toptop
-#
-# The bleeding edge is also available:
-#
-#     brew install --HEAD ur-grue/tap/toptop
+# The bleeding edge is also available with `brew install --HEAD toptop`.
 class Toptop < Formula
   desc "Local-inference observability for the terminal (htop/btop-class monitor)"
   homepage "https://github.com/ur-grue/toptop"

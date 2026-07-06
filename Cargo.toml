@@ -11,7 +11,7 @@ homepage = "https://github.com/ur-grue/toptop"
 authors = ["The toptop authors"]
 keywords = ["system-monitor", "tui", "gpu", "llm", "htop"]
 categories = ["command-line-utilities"]
-exclude = ["/.github", "/packaging", "/man", "/completions"]
+exclude = ["/.github", "/Formula", "/assets", "/docs", "/scripts", "/man", "/completions"]
 
 [[bin]]
 name = "toptop"

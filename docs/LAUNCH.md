@@ -8,8 +8,10 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
 
 - [ ] `git tag -a v1.0.0 && git push origin v1.0.0` (triggers the release
       workflow → tarball + .deb attached to the GitHub Release)
-- [ ] Create the Homebrew tap repo (`ur-grue/homebrew-tap`) and drop in
-      `packaging/homebrew/toptop.rb`; fill in the release-tarball `sha256`
+- [x] Homebrew: the main repo is its own tap (`Formula/toptop.rb`, pinned to
+      v1.0.0) — `brew tap ur-grue/toptop https://github.com/ur-grue/toptop`.
+      Optionally create `ur-grue/homebrew-tap` later for the shorter
+      `brew install ur-grue/tap/toptop` form.
 - [ ] Repo social-preview image (Settings → General → Social preview): upload
       a render of `assets/ai-demo.svg` — it's what shows when the link is shared
 - [ ] Verify README renders correctly on github.com/ur-grue/toptop (banner,
