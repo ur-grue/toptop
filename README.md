@@ -258,15 +258,15 @@ cargo build --release
 **Debian / Ubuntu** (`.deb` from the [v1.0.0 release](https://github.com/ur-grue/toptop/releases/latest)):
 
 ```bash
-wget https://github.com/ur-grue/toptop/releases/download/v1.0.0/toptop_1.0.0-1_amd64.deb
-sudo apt install ./toptop_1.0.0-1_amd64.deb   # installs binary, man page, completions
+wget https://github.com/ur-grue/toptop/releases/download/v1.0.1/toptop_1.0.1-1_amd64.deb
+sudo apt install ./toptop_1.0.1-1_amd64.deb   # installs binary, man page, completions
 ```
 
 **Binary tarball** (x86_64 Linux):
 
 ```bash
-curl -L https://github.com/ur-grue/toptop/releases/download/v1.0.0/toptop-1.0.0-x86_64-linux.tar.gz | tar xz
-./toptop-1.0.0-x86_64-linux/toptop
+curl -L https://github.com/ur-grue/toptop/releases/download/v1.0.1/toptop-1.0.1-x86_64-linux.tar.gz | tar xz
+./toptop-1.0.1-x86_64-linux/toptop
 ```
 
 **Homebrew** (this repo is its own tap — the [formula](Formula/toptop.rb) is pinned to v1.0.0):
