@@ -1,10 +1,17 @@
 name: Release
 
 # Build a release binary tarball and a .deb, then attach them to the GitHub
-# Release whenever a v* tag is pushed.
+# Release. Runs when a v* tag is pushed, or on manual dispatch with a tag name
+# (in which case the release step creates the tag at the dispatched commit —
+# useful where the git remote blocks direct tag pushes).
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
 
 permissions:
   contents: write
@@ -23,8 +30,10 @@ jobs:
         run: cargo build --release --locked
 
       - name: Package tarball
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           PKG="toptop-${VERSION}-x86_64-linux"
           mkdir -p "dist/${PKG}"
           cp target/release/toptop "dist/${PKG}/"
@@ -40,6 +49,7 @@ jobs:
       - name: Publish to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: |
             dist/*.tar.gz
             dist/*.deb
