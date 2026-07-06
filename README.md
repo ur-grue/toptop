@@ -383,6 +383,15 @@ Settings live at `~/.config/toptop/config.conf` (honoring `XDG_CONFIG_HOME`) and
 on exit, so your theme, refresh rate, tree mode and layout persist between runs. CLI flags
 always override the file.
 
+## 🤝 Contributing
+
+Bug reports, runtime integrations (MLC? TensorRT‑LLM?), and packaging help are all
+welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The whole test suite runs headless
+(`cargo test`), so you don't even need a GPU to hack on most of it.
+
+**If toptop showed you why your model was slow, [a star](https://github.com/ur-grue/toptop/stargazers)
+helps other people find it.** ⭐
+
 ## 📝 License
 
 [GPL‑3.0‑or‑later](LICENSE).
