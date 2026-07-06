@@ -128,6 +128,13 @@ static GRAD_CYBER: [Rgb; 4] = [
     rgb(255, 46, 151), // neon magenta
     rgb(255, 41, 90),  // hot pink-red
 ];
+// Saturated-but-dark stops that stay readable on white backgrounds.
+static GRAD_PAPER: [Rgb; 4] = [
+    rgb(46, 125, 50), // green 800
+    rgb(214, 129, 0), // amber 800
+    rgb(230, 81, 0),  // orange 900
+    rgb(183, 28, 28), // red 900
+];
 
 /// All themes, in cycle order.
 pub static THEMES: &[Theme] = &[
@@ -238,6 +245,25 @@ pub static THEMES: &[Theme] = &[
         disk_write: rgb(255, 46, 151),
         selection: rgb(36, 23, 52),
         gradient: &GRAD_CYBER,
+    },
+    // For light terminal backgrounds — dark text, saturated-dark accents.
+    Theme {
+        name: "paper",
+        fg: rgb(40, 42, 54),
+        bg: None, // keep the terminal's light background
+        dim: rgb(125, 128, 140),
+        accent: rgb(156, 39, 143), // deep magenta
+        accent2: rgb(2, 105, 160), // deep teal-blue
+        border: rgb(175, 178, 190),
+        border_focus: rgb(156, 39, 143),
+        mem: rgb(2, 105, 160),
+        swap: rgb(123, 60, 172),
+        net_down: rgb(46, 125, 50),
+        net_up: rgb(214, 129, 0),
+        disk_read: rgb(2, 105, 160),
+        disk_write: rgb(173, 38, 100),
+        selection: rgb(222, 224, 233),
+        gradient: &GRAD_PAPER,
     },
 ];
 

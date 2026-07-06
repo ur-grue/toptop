@@ -125,7 +125,7 @@ sensors, battery, six themes — all in a single **~1 MB binary with zero runtim
 | ☠️ **Signal menu** | send any of nine signals (`SIGTERM`…`SIGUSR2`) behind a confirmation prompt |
 | 🌐 **Network + connections** | per‑interface rx/tx braille graph; a live TCP/UDP table mapping sockets → process (`n`) |
 | 🗄️ **Disk + sensors** | per‑mount usage, read/write I/O graph, temperatures, battery |
-| 🎨 **Six themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk`; `full`/`cpu`/`process` presets |
+| 🎨 **Seven themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk` · `paper` (light terminals); `full`/`cpu`/`process` presets |
 | 🪶 **Tiny & safe** | ~1 MB binary, zero runtime deps, adaptive 250‑col→tiny layout, restores your terminal even on panic |
 
 ## 🤖 For AI engineers
@@ -279,10 +279,13 @@ brew install toptop                  # or: brew install --HEAD toptop for the ti
 
 ### Platform support
 
-`toptop` is **Linux-first**. The cross-platform core — CPU, memory, network,
-disk and the process table (via `sysinfo`) — also builds and runs on macOS and
-BSD; the Linux-specific panels (GPU via `sysfs`, battery, and the `/proc`-based
-connections inspector) simply stay empty there rather than failing.
+`toptop` is **Linux-first**, and **verified on macOS** (Homebrew source build on an
+Intel iMac): per‑core CPU, memory, network, disk **including per‑process I/O rates**,
+**temperature sensors** (SMC), and the full process table all work. The Linux‑specific
+parts — GPU metrics (`nvidia-smi`/`sysfs`), battery, and the `/proc`‑based connections
+inspector — degrade gracefully to empty panels there (Apple‑GPU support is tracked in
+[#4](https://github.com/ur-grue/toptop/issues/4)). On light terminal backgrounds, use
+`--theme paper`.
 
 ## 🎛️ Usage
 
@@ -291,7 +294,7 @@ toptop [OPTIONS]
 
 OPTIONS:
     -t, --tick <MS>      Refresh interval in milliseconds (100‑60000)
-        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk)
+        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk, paper)
         --tree           Start in process‑tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local‑LLM GPU view on launch
@@ -325,7 +328,7 @@ OPTIONS:
 
 Cycle live with `p` / `P`, or launch with `--theme <name>`:
 
-`gruvbox` &nbsp;·&nbsp; `nord` &nbsp;·&nbsp; `dracula` &nbsp;·&nbsp; `tokyonight` &nbsp;·&nbsp; `matrix` &nbsp;·&nbsp; `cyberpunk`
+`gruvbox` &nbsp;·&nbsp; `nord` &nbsp;·&nbsp; `dracula` &nbsp;·&nbsp; `tokyonight` &nbsp;·&nbsp; `matrix` &nbsp;·&nbsp; `cyberpunk` &nbsp;·&nbsp; `paper` (for light backgrounds)
 
 Each theme defines a full semantic palette **and** a load gradient (green → yellow → red),
 emitted as true 24‑bit RGB so meters and graphs interpolate smoothly on any modern terminal.

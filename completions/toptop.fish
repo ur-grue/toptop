@@ -3,7 +3,7 @@
 
 complete -c toptop -f
 complete -c toptop -s t -l tick -d 'Refresh interval in milliseconds' -r
-complete -c toptop -l theme -d 'Color theme' -xa 'gruvbox nord dracula tokyonight matrix'
+complete -c toptop -l theme -d 'Color theme' -xa 'gruvbox nord dracula tokyonight matrix cyberpunk paper'
 complete -c toptop -l tree -d 'Start in process-tree view'
 complete -c toptop -l no-tree -d 'Start in flat process view'
 complete -c toptop -l list-themes -d 'Print available themes and exit'
