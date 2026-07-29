@@ -4,7 +4,7 @@
 //! histories. Calling [`Collector::refresh`] once per tick updates every public
 //! field in place — the UI layer only ever reads from a `&Collector`.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sysinfo::{
     Components, CpuRefreshKind, Disks, MemoryRefreshKind, Networks, Pid, ProcessRefreshKind,
@@ -280,11 +280,12 @@ impl Collector {
         self.gpus = gpu_snap.gpus;
         self.gpu_procs = gpu_snap.procs;
         self.servers = self.infer_monitor.snapshot();
-        // Battery level moves on the order of minutes; poll it at most every
-        // 10s rather than doing filesystem I/O on every (up to 4×/s) tick.
+        // Battery level moves on the order of minutes; poll it at most this
+        // often rather than doing filesystem I/O on every (up to 4×/s) tick.
+        const BATTERY_POLL: Duration = Duration::from_secs(10);
         if self
             .last_battery_at
-            .map(|t| now.duration_since(t).as_secs() >= 10)
+            .map(|t| now.duration_since(t) >= BATTERY_POLL)
             .unwrap_or(true)
         {
             self.battery = read_battery();
@@ -544,21 +545,37 @@ impl Collector {
     }
 }
 
-/// Map a sysinfo `Signal` to its platform signal number, or `None` if it is
-/// not one we support delivering.
+/// The signals offered by the interactive menu, in display order: label,
+/// platform signal number (straight from libc), and the sysinfo `Signal`.
+/// Single source of truth — the menu, status line, and delivery all derive
+/// from this, so a new signal is added in exactly one place.
+pub const SIGNALS: &[(&str, i32, Signal)] = &[
+    ("SIGTERM", libc::SIGTERM, Signal::Term),
+    ("SIGKILL", libc::SIGKILL, Signal::Kill),
+    ("SIGINT", libc::SIGINT, Signal::Interrupt),
+    ("SIGHUP", libc::SIGHUP, Signal::Hangup),
+    ("SIGQUIT", libc::SIGQUIT, Signal::Quit),
+    ("SIGSTOP", libc::SIGSTOP, Signal::Stop),
+    ("SIGCONT", libc::SIGCONT, Signal::Continue),
+    ("SIGUSR1", libc::SIGUSR1, Signal::User1),
+    ("SIGUSR2", libc::SIGUSR2, Signal::User2),
+];
+
+/// Human label for a signal, or "signal" if it isn't one the menu offers.
+pub fn signal_name(sig: Signal) -> &'static str {
+    SIGNALS
+        .iter()
+        .find(|(_, _, s)| *s == sig)
+        .map(|(name, _, _)| *name)
+        .unwrap_or("signal")
+}
+
+/// Platform signal number for a signal, or `None` if we don't deliver it.
 fn raw_signal(sig: Signal) -> Option<i32> {
-    Some(match sig {
-        Signal::Term => libc::SIGTERM,
-        Signal::Kill => libc::SIGKILL,
-        Signal::Interrupt => libc::SIGINT,
-        Signal::Hangup => libc::SIGHUP,
-        Signal::Quit => libc::SIGQUIT,
-        Signal::Stop => libc::SIGSTOP,
-        Signal::Continue => libc::SIGCONT,
-        Signal::User1 => libc::SIGUSR1,
-        Signal::User2 => libc::SIGUSR2,
-        _ => return None,
-    })
+    SIGNALS
+        .iter()
+        .find(|(_, _, s)| *s == sig)
+        .map(|(_, num, _)| *num)
 }
 
 /// Outcome of attempting to deliver a signal to a process.

@@ -8,7 +8,7 @@ use sysinfo::Signal;
 
 use crate::alerts::{self, Alert, AlertConfig};
 use crate::config::Config;
-use crate::metrics::{Collector, Connection, ProcInfo, SignalOutcome};
+use crate::metrics::{signal_name, Collector, Connection, ProcInfo, SignalOutcome, SIGNALS};
 use crate::theme::{Theme, THEMES};
 
 /// Process table sort columns.
@@ -100,20 +100,6 @@ pub struct PendingKill {
     pub name: String,
     pub signal: Signal,
 }
-
-/// Signals offered by the interactive signal menu (label, number, signal).
-/// Numbers come straight from libc so they are correct on every platform.
-pub const SIGNALS: &[(&str, i32, Signal)] = &[
-    ("SIGTERM", libc::SIGTERM, Signal::Term),
-    ("SIGKILL", libc::SIGKILL, Signal::Kill),
-    ("SIGINT", libc::SIGINT, Signal::Interrupt),
-    ("SIGHUP", libc::SIGHUP, Signal::Hangup),
-    ("SIGQUIT", libc::SIGQUIT, Signal::Quit),
-    ("SIGSTOP", libc::SIGSTOP, Signal::Stop),
-    ("SIGCONT", libc::SIGCONT, Signal::Continue),
-    ("SIGUSR1", libc::SIGUSR1, Signal::User1),
-    ("SIGUSR2", libc::SIGUSR2, Signal::User2),
-];
 
 /// The whole runtime state.
 pub struct App {
@@ -707,22 +693,5 @@ pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
         47..=54 => Some(SortField::Time),
         55..=56 => None,
         _ => Some(SortField::Name),
-    }
-}
-
-/// Human label for a signal. Covers every signal reachable from the menu; the
-/// single source of truth shared by the confirm prompt and the status line.
-pub fn signal_name(sig: Signal) -> &'static str {
-    match sig {
-        Signal::Term => "SIGTERM",
-        Signal::Kill => "SIGKILL",
-        Signal::Interrupt => "SIGINT",
-        Signal::Hangup => "SIGHUP",
-        Signal::Quit => "SIGQUIT",
-        Signal::Stop => "SIGSTOP",
-        Signal::Continue => "SIGCONT",
-        Signal::User1 => "SIGUSR1",
-        Signal::User2 => "SIGUSR2",
-        _ => "signal",
     }
 }
