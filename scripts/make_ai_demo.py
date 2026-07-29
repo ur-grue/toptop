@@ -9,11 +9,13 @@ and the spill alert flashes. Re-run after edits:
 import os
 
 W, H = 760, 396
-BG, BORDER = "#0d0a1a", "#2de2e6"
-TEXT, DIM = "#dcebff", "#8a78b8"
-CYAN, MAGENTA = "#2de2e6", "#ff2e97"
-GREEN, RED = "#2bd576", "#ff2975"
-TRACK = "#241a38"
+# Palette mirrors toptop's default `gruvbox` theme (src/theme.rs THEMES[0]) so
+# the hero graphic shows the colors users actually see on first launch.
+BG, BORDER = "#282828", "#fe8019"    # dark bg, accent-orange border
+TEXT, DIM = "#ebdbb2", "#928374"      # body text, dimmed labels
+ACCENT, AQUA = "#fe8019", "#83a598"   # titles/headings (orange), secondary (aqua)
+GREEN, YELLOW, RED = "#b8bb26", "#fabd2f", "#fb4934"  # load-gradient stops
+TRACK = "#3c3836"                     # meter track (selection bg)
 
 BAR_X, BAR_W, BAR_H = 188, 372, 16
 VAL_X = BAR_X + BAR_W + 14
@@ -64,11 +66,8 @@ def main():
     # Panel.
     s.append(f'<rect x="2" y="2" width="{W-4}" height="{H-4}" rx="12" fill="{BG}" '
              f'stroke="{BORDER}" stroke-width="2"/>')
-    # Title bar.
-    s.append('<circle cx="28" cy="30" r="6" fill="#ff5f56"/>'
-             '<circle cx="48" cy="30" r="6" fill="#ffbd2e"/>'
-             '<circle cx="68" cy="30" r="6" fill="#27c93f"/>')
-    s.append(text(W/2, 36, "toptop · AI / local-LLM GPU view", fill=CYAN, size=17,
+    # Title bar — the real view is a bordered panel with no window chrome.
+    s.append(text(W/2, 36, "AI · local-LLM GPU view · Esc/a to close", fill=ACCENT, size=17,
                   weight="bold", anchor="middle"))
 
     # Alert banner (flashing).
@@ -80,27 +79,27 @@ def main():
                   fill=TEXT, size=15))
 
     # GPU line.
-    s.append(text(28, 112, "gpu0  NVIDIA GeForce RTX 4090", fill="#9fe7ff", size=17, weight="bold"))
+    s.append(text(28, 112, "gpu0  NVIDIA GeForce RTX 4090", fill=AQUA, size=17, weight="bold"))
     s.append(text(W-28, 112, "312 / 450 W    71°C", fill=DIM, size=15, anchor="end"))
 
     # compute (static), mem b/w (pulsing), vram (filling to red).
     s.append(text(40, 152, "compute", fill=DIM, size=16))
-    s.append(bar(140, 0.31, CYAN))
-    s.append(text(VAL_X, 152, "31%", fill=CYAN, size=16))
+    s.append(bar(140, 0.31, GREEN))
+    s.append(text(VAL_X, 152, "31%", fill=GREEN, size=16))
 
     s.append(text(40, 188, "mem b/w", fill=DIM, size=16))
     s.append(bar(176, 0.78,
-                 MAGENTA,
+                 ACCENT,
                  animate_w=([0.70, 0.86, 0.74, 0.82, 0.70], 3.6,
                             "0;0.25;0.5;0.75;1", ".4 0 .6 1;.4 0 .6 1;.4 0 .6 1;.4 0 .6 1")))
-    s.append(text(VAL_X, 188, "← bottleneck", fill=MAGENTA, size=15, weight="bold"))
+    s.append(text(VAL_X, 188, "← bottleneck", fill=RED, size=15, weight="bold"))
 
     s.append(text(40, 224, "vram", fill=DIM, size=16))
     s.append(bar(212, 0.84,
                  GREEN,
                  animate_w=([0.84, 0.97, 0.97, 0.84], 6.0, "0;0.5;0.85;1",
                             ".5 0 .5 1;.5 0 .5 1;.5 0 .5 1"),
-                 animate_fill=(f"{GREEN};#ffd319;{RED};{RED};{GREEN}", 6.0, "0;0.35;0.5;0.85;1")))
+                 animate_fill=(f"{GREEN};{YELLOW};{RED};{RED};{GREEN}", 6.0, "0;0.35;0.5;0.85;1")))
     s.append(text(VAL_X, 224, "/ 24 GiB", fill=DIM, size=15))
 
     # Spill warning fades in as VRAM peaks.
@@ -111,15 +110,15 @@ def main():
 
     # Server + ticking tokens/sec.
     s.append(f'<line x1="28" y1="278" x2="{W-28}" y2="278" stroke="{TRACK}" stroke-width="1"/>')
-    s.append(text(28, 308, "Inference servers (auto-discovered)", fill=CYAN, size=16, weight="bold"))
-    s.append(text(44, 336, "vLLM :8000", fill="#9fe7ff", size=17, weight="bold"))
+    s.append(text(28, 308, "Inference servers (auto-discovered)", fill=ACCENT, size=16, weight="bold"))
+    s.append(text(44, 336, "vLLM :8000", fill=AQUA, size=17, weight="bold"))
     s.append(text(160, 336, "meta-llama/Llama-3-8B", fill=DIM, size=15))
     s.append(ticking(44, 372, ["80.6", "82.3", "84.1", "85.0", "83.2", "81.4"]))
     s.append(text(132, 372, "tok/s", fill=GREEN, size=16))
     s.append(text(220, 372, "·  0.29 tok/s/W   ·   kv 64%   ·   req 2/5   ·   ttft 180 ms",
                   fill=DIM, size=15))
     # Blinking cursor.
-    s.append(f'<rect x="{W-40}" y="360" width="10" height="18" fill="{CYAN}">'
+    s.append(f'<rect x="{W-40}" y="360" width="10" height="18" fill="{AQUA}">'
              '<animate attributeName="opacity" values="1;1;0;0" dur="1s" '
              'repeatCount="indefinite"/></rect>')
 
