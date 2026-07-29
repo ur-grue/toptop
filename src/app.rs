@@ -8,7 +8,9 @@ use sysinfo::Signal;
 
 use crate::alerts::{self, Alert, AlertConfig};
 use crate::config::Config;
-use crate::metrics::{signal_name, Collector, Connection, ProcInfo, SignalOutcome, SIGNALS};
+use crate::metrics::{
+    signal_name, Collector, Connection, PriorityOutcome, ProcInfo, SignalOutcome, SIGNALS,
+};
 use crate::theme::{Theme, THEMES};
 
 /// Process table sort columns.
@@ -93,6 +95,18 @@ impl LayoutPreset {
     }
 }
 
+/// Nice-value presets offered by the renice menu (label, value). Lower is
+/// higher priority; negative values need privilege.
+pub const NICE_LEVELS: &[(&str, i32)] = &[
+    ("-20  highest", -20),
+    ("-10", -10),
+    ("-5", -5),
+    ("0  normal", 0),
+    ("5", 5),
+    ("10", 10),
+    ("19  lowest", 19),
+];
+
 /// A pending destructive action awaiting confirmation.
 #[derive(Clone)]
 pub struct PendingKill {
@@ -130,6 +144,8 @@ pub struct App {
     pub pending_kill: Option<PendingKill>,
     /// When `Some`, the signal menu is open with the given highlighted index.
     pub signal_menu: Option<usize>,
+    /// When `Some`, the renice menu is open with the given highlighted index.
+    pub renice_menu: Option<usize>,
     /// Whether the process detail overlay is shown for the selection.
     pub show_detail: bool,
     /// Whether the AI/LLM GPU view is shown.
@@ -173,6 +189,7 @@ impl App {
             proc_rows: 0,
             pending_kill: None,
             signal_menu: None,
+            renice_menu: None,
             show_detail: false,
             show_ai: false,
             show_conn: false,
@@ -463,6 +480,35 @@ impl App {
         }
     }
 
+    /// Open the renice menu for the selected process, highlighting "0 normal".
+    fn open_renice_menu(&mut self) {
+        if self.selected_index().is_some() {
+            self.renice_menu = Some(NICE_LEVELS.iter().position(|&(_, n)| n == 0).unwrap_or(0));
+        }
+    }
+
+    /// Apply the highlighted nice value to the selected process. Renice isn't
+    /// destructive, so it applies directly (no confirmation) and reports the
+    /// outcome in the status line.
+    fn choose_nice(&mut self) {
+        let Some(idx) = self.renice_menu.take() else {
+            return;
+        };
+        let Some((pid, name)) = self.selected_proc().map(|p| (p.pid, p.name.clone())) else {
+            return;
+        };
+        let nice = NICE_LEVELS[idx].1;
+        let msg = match self.collector.set_priority(pid, nice) {
+            PriorityOutcome::Applied => format!("Reniced {} ({}) to {}", name, pid, nice),
+            PriorityOutcome::NotPermitted => format!(
+                "Permission denied renicing {} ({}) — lowering nice needs root",
+                name, pid
+            ),
+            PriorityOutcome::Gone => format!("{} ({}) already exited", name, pid),
+        };
+        self.set_status(msg);
+    }
+
     fn confirm_kill(&mut self) {
         if let Some(pk) = self.pending_kill.take() {
             let sig = signal_name(pk.signal);
@@ -505,6 +551,22 @@ impl App {
                 }
                 KeyCode::Enter => self.choose_signal(),
                 KeyCode::Esc | KeyCode::Char('q') => self.signal_menu = None,
+                _ => {}
+            }
+            return;
+        }
+
+        // Renice menu next.
+        if let Some(idx) = self.renice_menu {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.renice_menu = Some(idx.saturating_sub(1));
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.renice_menu = Some((idx + 1).min(NICE_LEVELS.len() - 1));
+                }
+                KeyCode::Enter => self.choose_nice(),
+                KeyCode::Esc | KeyCode::Char('q') => self.renice_menu = None,
                 _ => {}
             }
             return;
@@ -627,6 +689,7 @@ impl App {
                 self.set_status("Filter: type to match, Enter to apply, Esc to clear");
             }
             KeyCode::Char('K') | KeyCode::F(9) => self.open_signal_menu(),
+            KeyCode::Char('r') => self.open_renice_menu(),
             KeyCode::Delete => self.request_kill(Signal::Term),
             KeyCode::Char('x') => self.request_kill(Signal::Kill),
             _ => {}
