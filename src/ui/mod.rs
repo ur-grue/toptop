@@ -1032,7 +1032,11 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
 
     if c.gpus.is_empty() {
         lines.push(Line::from(Span::styled(
-            "No GPU detected — showing CPU-based inference below.",
+            crate::metrics::gpu::no_gpu_reason(),
+            dim(theme),
+        )));
+        lines.push(Line::from(Span::styled(
+            "AI workloads and inference servers still show below.",
             dim(theme),
         )));
         lines.push(Line::from(Span::raw("")));
@@ -1230,6 +1234,12 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 lines.push(Line::from(stat));
             }
         }
+        lines.push(Line::from(Span::raw("")));
+    } else {
+        lines.push(Line::from(Span::styled(
+            crate::metrics::infer::no_servers_reason(),
+            dim(theme),
+        )));
         lines.push(Line::from(Span::raw("")));
     }
 

@@ -304,6 +304,25 @@ fn query_nvidia_procs() -> Vec<GpuProc> {
     .unwrap_or_default()
 }
 
+/// Human explanation for an empty GPU list, tailored to the build target so
+/// the AI view is honest instead of blank. On Apple Silicon a capable GPU
+/// exists — toptop just has no metrics source for it yet — so this must NOT
+/// claim "no GPU". Exactly one arm compiles per platform.
+pub fn no_gpu_reason() -> &'static str {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "Apple Silicon GPU metrics aren't wired up yet (tracked in ur-grue/toptop#4)."
+    }
+    #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
+    {
+        "No GPU metrics source on this Mac."
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "No GPU metrics source found (needs nvidia-smi, or /sys/class/drm for AMD/Intel)."
+    }
+}
+
 /// Combine all GPU sources: NVIDIA via `nvidia-smi`, AMD/Intel via sysfs.
 fn query_all() -> GpuSnapshot {
     let mut gpus = query_nvidia().unwrap_or_default();
@@ -360,6 +379,20 @@ impl Default for GpuMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_gpu_reason_is_platform_honest() {
+        let msg = no_gpu_reason();
+        assert!(!msg.is_empty());
+        // On Apple Silicon a GPU exists — the message must not deny that, and
+        // must point at the tracking issue.
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            assert!(msg.contains("Apple Silicon"));
+            assert!(msg.contains("#4"));
+            assert!(!msg.to_lowercase().contains("no gpu"));
+        }
+    }
 
     #[test]
     fn parses_legacy() {
