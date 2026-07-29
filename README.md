@@ -83,7 +83,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 
 High‑resolution braille graphs, truecolor gradient meters, an interactive process table (tree,
 filter, click‑to‑sort, signal menu), per‑interface network, per‑mount disk + I/O, temperature
-sensors, battery, six themes — all in a single **~1 MB binary with zero runtime dependencies**.
+sensors, battery, seven themes — all in a single **~1 MB binary with zero runtime dependencies**.
 </details>
 
 <details>
