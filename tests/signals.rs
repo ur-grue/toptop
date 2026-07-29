@@ -8,7 +8,10 @@ use toptop::metrics::{Collector, SignalOutcome};
 
 #[test]
 fn delivers_signal_to_owned_process() {
-    let mut child = Command::new("sleep").arg("30").spawn().expect("spawn sleep");
+    let mut child = Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
     let pid = child.id();
 
     let collector = Collector::new(64);
