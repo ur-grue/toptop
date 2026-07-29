@@ -961,14 +961,14 @@ fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app:
         .selected_proc()
         .map(|p| format!("{} ({})", truncate(&p.name, 20), p.pid))
         .unwrap_or_else(|| "process".into());
-    let rect = centered(area, 40, (crate::app::SIGNALS.len() + 3) as u16);
+    let rect = centered(area, 40, (crate::metrics::SIGNALS.len() + 3) as u16);
     f.render_widget(Clear, rect);
     let block = panel(&format!("signal · {}", target), theme);
     let inner = block.inner(rect);
     f.render_widget(block, rect);
 
     let mut lines: Vec<Line> = Vec::new();
-    for (i, (name, num, _)) in crate::app::SIGNALS.iter().enumerate() {
+    for (i, (name, num, _)) in crate::metrics::SIGNALS.iter().enumerate() {
         let selected = i == idx;
         let style = if selected {
             Style::default()
@@ -1522,7 +1522,7 @@ fn render_confirm(f: &mut Frame, area: Rect, theme: &Theme, pk: &crate::app::Pen
         ));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let sig = crate::app::signal_name(pk.signal);
+    let sig = crate::metrics::signal_name(pk.signal);
     let lines = vec![
         Line::from(vec![
             Span::styled("Send ", Style::default().fg(theme.fg.color())),
