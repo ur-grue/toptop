@@ -239,6 +239,47 @@ pub fn to_json(c: &Collector, top_procs: usize) -> String {
     s
 }
 
+// ── CSV export ─────────────────────────────────────────────────────────────
+
+/// Escape one CSV field per RFC 4180: wrap in double quotes when it contains a
+/// comma, quote, or newline, doubling any embedded quotes.
+fn csv_field(s: &str) -> String {
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// Render the top processes (highest CPU first, capped at `top_procs`) as CSV
+/// with a header row. CSV is the natural tabular slice for spreadsheets and
+/// `awk`; the full nested snapshot stays in `--export json`.
+pub fn to_csv(c: &Collector, top_procs: usize) -> String {
+    let mut procs: Vec<&_> = c.procs.iter().collect();
+    procs.sort_by(|a, b| {
+        b.cpu
+            .partial_cmp(&a.cpu)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut s = String::with_capacity(top_procs * 64 + 80);
+    s.push_str("pid,name,user,cpu_pct,mem_pct,mem_bytes,io_read_bps,io_write_bps,command\n");
+    for p in procs.iter().take(top_procs) {
+        s.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{}\n",
+            p.pid,
+            csv_field(&p.name),
+            csv_field(&p.user),
+            num(p.cpu as f64),
+            num(p.mem_pct as f64),
+            p.mem_bytes,
+            num(p.io_read_rate),
+            num(p.io_write_rate),
+            csv_field(&p.cmd),
+        ));
+    }
+    s
+}
+
 // ── Prometheus exposition format ───────────────────────────────────────────
 
 /// Sanitize a label value for the Prometheus text format.
@@ -375,6 +416,24 @@ mod tests {
         assert_eq!(num(f64::NAN), "0");
         assert_eq!(num(f64::INFINITY), "0");
         assert_eq!(num(1.5), "1.50");
+    }
+
+    #[test]
+    fn csv_field_escapes_per_rfc4180() {
+        assert_eq!(csv_field("plain"), "plain");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_field("two\nlines"), "\"two\nlines\"");
+    }
+
+    #[test]
+    fn csv_has_header_row() {
+        let c = Collector::new(64);
+        let csv = to_csv(&c, 5);
+        assert_eq!(
+            csv.lines().next().unwrap(),
+            "pid,name,user,cpu_pct,mem_pct,mem_bytes,io_read_bps,io_write_bps,command"
+        );
     }
 
     #[test]

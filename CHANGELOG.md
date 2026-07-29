@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--export csv` — the top processes as CSV (header row, RFC 4180 quoting) for
+  spreadsheets and `awk`, alongside the existing `json` and `prometheus`
+  exporters. (#16)
+
 ### Fixed
 
 - **Signal delivery now reports a precise outcome** — *delivered*, *permission
