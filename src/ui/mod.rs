@@ -707,6 +707,7 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         Cell::from("MEM%"),
         Cell::from("MEM"),
         Cell::from("DISK"),
+        Cell::from("VRAM"),
         Cell::from("TIME"),
         Cell::from("S"),
         Cell::from("COMMAND"),
@@ -750,6 +751,14 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled("·", dim(theme))
                 }
             }),
+            Cell::from(if p.gpu_mem > 0 {
+                Span::styled(
+                    short_bytes(p.gpu_mem),
+                    Style::default().fg(theme.accent2.color()),
+                )
+            } else {
+                Span::styled("·", dim(theme))
+            }),
             Cell::from(compact_duration(p.run_time)),
             Cell::from(p.status.to_string()),
             Cell::from(cmd),
@@ -774,6 +783,7 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(5),
         Constraint::Length(7),
         Constraint::Length(8),
+        Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(1),
         Constraint::Min(10),
