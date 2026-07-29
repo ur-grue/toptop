@@ -304,6 +304,127 @@ fn query_nvidia_procs() -> Vec<GpuProc> {
     .unwrap_or_default()
 }
 
+/// Apple Silicon GPU metrics via IOKit's `IOAccelerator` `PerformanceStatistics`
+/// dictionary — the same no-root source `asitop`/`macmon` read. Raw FFI against
+/// the system CoreFoundation/IOKit frameworks, so we add no crates.
+#[cfg(target_os = "macos")]
+mod apple {
+    use std::ffi::{c_void, CString};
+    use std::os::raw::{c_char, c_int, c_long};
+
+    type CFTypeRef = *const c_void;
+    type CFStringRef = *const c_void;
+    type CFDictionaryRef = *const c_void;
+    type CFAllocatorRef = *const c_void;
+    type IoObject = u32;
+
+    const UTF8: u32 = 0x0800_0100; // kCFStringEncodingUTF8
+                                   // kCFNumberSInt64Type. CFNumberType is backed by CFIndex (c_long, 64-bit on
+                                   // macOS), so this must be c_long — a c_int here is an FFI ABI mismatch.
+    const SINT64: c_long = 4;
+    const NULL_ALLOC: CFAllocatorRef = std::ptr::null();
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFStringCreateWithCString(a: CFAllocatorRef, s: *const c_char, enc: u32) -> CFStringRef;
+        fn CFDictionaryGetValue(d: CFDictionaryRef, k: *const c_void) -> *const c_void;
+        fn CFNumberGetValue(n: *const c_void, t: c_long, v: *mut c_void) -> bool;
+        fn CFRelease(cf: CFTypeRef);
+    }
+
+    #[link(name = "IOKit", kind = "framework")]
+    extern "C" {
+        fn IOServiceMatching(name: *const c_char) -> CFDictionaryRef;
+        fn IOServiceGetMatchingService(main_port: IoObject, matching: CFDictionaryRef) -> IoObject;
+        fn IORegistryEntryCreateCFProperty(
+            entry: IoObject,
+            key: CFStringRef,
+            alloc: CFAllocatorRef,
+            opts: u32,
+        ) -> CFTypeRef;
+        fn IOObjectRelease(obj: IoObject) -> c_int;
+    }
+
+    /// Create a CFString the caller owns (must `CFRelease`). None on failure.
+    unsafe fn cfstr(s: &str) -> Option<CFStringRef> {
+        let c = CString::new(s).ok()?;
+        let r = CFStringCreateWithCString(NULL_ALLOC, c.as_ptr(), UTF8);
+        if r.is_null() {
+            None
+        } else {
+            Some(r)
+        }
+    }
+
+    /// Read an integer from a CFDictionary by string key. The value is borrowed
+    /// (Get-rule), so it is not released here.
+    unsafe fn dict_i64(dict: CFDictionaryRef, key: &str) -> Option<i64> {
+        let k = cfstr(key)?;
+        let val = CFDictionaryGetValue(dict, k);
+        CFRelease(k);
+        if val.is_null() {
+            return None;
+        }
+        let mut out: i64 = 0;
+        let ok = CFNumberGetValue(val, SINT64, &mut out as *mut i64 as *mut c_void);
+        ok.then_some(out)
+    }
+
+    /// GPU core utilization %, or None if IOKit doesn't report it.
+    pub fn utilization() -> Option<f32> {
+        // SAFETY: a standard IOKit registry read. Ownership: the matching dict
+        // is consumed by IOServiceGetMatchingService; the service object and the
+        // Create-rule PerformanceStatistics dict are released here; dictionary
+        // values are Get-rule and not released. Port 0 is kIOMainPortDefault.
+        unsafe {
+            let name = CString::new("IOAccelerator").ok()?;
+            let matching = IOServiceMatching(name.as_ptr());
+            if matching.is_null() {
+                return None;
+            }
+            let service = IOServiceGetMatchingService(0, matching);
+            if service == 0 {
+                return None;
+            }
+            let Some(key) = cfstr("PerformanceStatistics") else {
+                IOObjectRelease(service);
+                return None;
+            };
+            let perf = IORegistryEntryCreateCFProperty(service, key, NULL_ALLOC, 0);
+            CFRelease(key);
+            IOObjectRelease(service);
+            if perf.is_null() {
+                return None;
+            }
+            let util = dict_i64(perf, "Device Utilization %");
+            CFRelease(perf);
+            util.map(|u| u.clamp(0, 100) as f32)
+        }
+    }
+}
+
+/// Apple Silicon GPU as a `Gpu` row: real utilization, no discrete VRAM (unified
+/// memory representation is deferred — see ur-grue/toptop#4).
+#[cfg(target_os = "macos")]
+fn apple_gpus() -> Vec<Gpu> {
+    match apple::utilization() {
+        Some(util) => vec![Gpu {
+            name: "Apple Silicon GPU".to_string(),
+            util_pct: util,
+            has_util: true,
+            mem_util: 0.0,
+            has_mem_util: false,
+            mem_used: 0,
+            mem_total: 0,
+            temp: 0.0,
+            power: 0.0,
+            power_limit: 0.0,
+            throttled: false,
+        }],
+        None => Vec::new(),
+    }
+}
+
 /// Human explanation for an empty GPU list, tailored to the build target so
 /// the AI view is honest instead of blank. On Apple Silicon a capable GPU
 /// exists — toptop just has no metrics source for it yet — so this must NOT
@@ -323,11 +444,14 @@ pub fn no_gpu_reason() -> &'static str {
     }
 }
 
-/// Combine all GPU sources: NVIDIA via `nvidia-smi`, AMD/Intel via sysfs.
+/// Combine all GPU sources: NVIDIA via `nvidia-smi`, AMD/Intel via sysfs, and
+/// Apple Silicon via IOKit.
 fn query_all() -> GpuSnapshot {
     let mut gpus = query_nvidia().unwrap_or_default();
     let nvidia_present = !gpus.is_empty();
     gpus.extend(read_sysfs_gpus());
+    #[cfg(target_os = "macos")]
+    gpus.extend(apple_gpus());
     let procs = if nvidia_present {
         query_nvidia_procs()
     } else {
@@ -373,6 +497,20 @@ impl GpuMonitor {
 impl Default for GpuMonitor {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod apple_tests {
+    /// The IOKit read must never panic and, when it reports a value, stay in
+    /// range. Accepts None so it's not flaky on Macs/CI without an accelerator.
+    #[test]
+    fn utilization_reads_or_none() {
+        if let Some(u) = super::apple::utilization() {
+            assert!((0.0..=100.0).contains(&u), "util out of range: {u}");
+        }
+        // apple_gpus() must also be panic-free and produce at most one row.
+        assert!(super::apple_gpus().len() <= 1);
     }
 }
 
