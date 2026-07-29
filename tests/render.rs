@@ -160,9 +160,10 @@ fn header_sort_mapping() {
     assert_eq!(header_sort_at(20), Some(SortField::Cpu));
     assert_eq!(header_sort_at(26), Some(SortField::Mem));
     assert_eq!(header_sort_at(40), Some(SortField::Io));
-    assert_eq!(header_sort_at(50), Some(SortField::Time));
-    assert_eq!(header_sort_at(55), None);
-    assert_eq!(header_sort_at(60), Some(SortField::Name));
+    assert_eq!(header_sort_at(50), Some(SortField::Gpu));
+    assert_eq!(header_sort_at(58), Some(SortField::Time));
+    assert_eq!(header_sort_at(63), None);
+    assert_eq!(header_sort_at(70), Some(SortField::Name));
 }
 
 #[test]

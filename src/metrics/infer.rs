@@ -251,6 +251,21 @@ fn read_proc_text(pid: u32, file: &str) -> Option<String> {
     std::fs::read_to_string(format!("/proc/{pid}/{file}")).ok()
 }
 
+/// Explanation shown when no inference servers were auto-discovered, tailored
+/// to the build target. Localhost discovery walks `/proc`, so it only runs on
+/// Linux today; elsewhere the AI view should say so rather than imply none are
+/// running. Exactly one arm compiles per platform.
+pub fn no_servers_reason() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "No inference servers found on localhost."
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        "Localhost server discovery is Linux-only (other platforms tracked in ur-grue/toptop#13)."
+    }
+}
+
 /// Discover serving runtimes that are listening, as `(port, pid)`.
 fn discover_servers() -> Vec<(u16, u32)> {
     let mut seen = std::collections::HashSet::new();
@@ -368,6 +383,19 @@ fn scrape_once(prev: &mut HashMap<(u32, u16, &'static str), (f64, Instant)>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_servers_reason_is_platform_honest() {
+        let msg = no_servers_reason();
+        assert!(!msg.is_empty());
+        // Off Linux, discovery doesn't run — the message must say so and point
+        // at the tracking issue rather than implying nothing is running.
+        #[cfg(not(target_os = "linux"))]
+        {
+            assert!(msg.contains("Linux-only"));
+            assert!(msg.contains("#13"));
+        }
+    }
 
     #[test]
     fn splits_and_dechunks() {

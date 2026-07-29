@@ -41,7 +41,7 @@ OPTIONS:
         --remote-cmd <C> Command run on each remote (default: toptop --export json)
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
-        --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
+        --export <FMT>   Print metrics and exit: 'json' (default), 'csv', or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus endpoint (default 127.0.0.1:9709)
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
@@ -121,6 +121,10 @@ fn main() -> Result<()> {
                         args.next();
                         "prometheus"
                     }
+                    Some("csv") => {
+                        args.next();
+                        "csv"
+                    }
                     Some("json") => {
                         args.next();
                         "json"
@@ -173,6 +177,7 @@ fn run_export(cfg: &Config, format: &str) -> Result<()> {
     app.on_tick();
     match format {
         "prometheus" => print!("{}", toptop::export::to_prometheus(&app.collector)),
+        "csv" => print!("{}", toptop::export::to_csv(&app.collector, 20)),
         _ => println!("{}", toptop::export::to_json(&app.collector, 20)),
     }
     io::stdout().flush().ok();

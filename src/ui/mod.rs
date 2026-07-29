@@ -49,6 +49,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if let Some(idx) = app.signal_menu {
         render_signal_menu(f, area, theme, idx, app);
     }
+    if let Some(idx) = app.renice_menu {
+        render_renice_menu(f, area, theme, idx, app);
+    }
     if app.show_help {
         render_help(f, area, theme);
     }
@@ -704,6 +707,7 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         Cell::from("MEM%"),
         Cell::from("MEM"),
         Cell::from("DISK"),
+        Cell::from("VRAM"),
         Cell::from("TIME"),
         Cell::from("S"),
         Cell::from("COMMAND"),
@@ -747,6 +751,14 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
                     Span::styled("·", dim(theme))
                 }
             }),
+            Cell::from(if p.gpu_mem > 0 {
+                Span::styled(
+                    short_bytes(p.gpu_mem),
+                    Style::default().fg(theme.accent2.color()),
+                )
+            } else {
+                Span::styled("·", dim(theme))
+            }),
             Cell::from(compact_duration(p.run_time)),
             Cell::from(p.status.to_string()),
             Cell::from(cmd),
@@ -771,6 +783,7 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         Constraint::Length(5),
         Constraint::Length(7),
         Constraint::Length(8),
+        Constraint::Length(7),
         Constraint::Length(7),
         Constraint::Length(1),
         Constraint::Min(10),
@@ -991,6 +1004,41 @@ fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app:
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
 }
 
+fn render_renice_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app: &App) {
+    let target = app
+        .selected_proc()
+        .map(|p| format!("{} ({})", truncate(&p.name, 20), p.pid))
+        .unwrap_or_else(|| "process".into());
+    let rect = centered(area, 40, (crate::app::NICE_LEVELS.len() + 3) as u16);
+    f.render_widget(Clear, rect);
+    let block = panel(&format!("renice · {}", target), theme);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, (label, _)) in crate::app::NICE_LEVELS.iter().enumerate() {
+        let selected = i == idx;
+        let style = if selected {
+            Style::default()
+                .bg(theme.selection.color())
+                .fg(theme.accent.color())
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.fg.color())
+        };
+        let marker = if selected { "▶ " } else { "  " };
+        lines.push(Line::from(Span::styled(
+            format!("{}nice {}", marker, label),
+            style,
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        "↑/↓ select · Enter apply · Esc cancel",
+        dim(theme),
+    )));
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
 /// The AI / local-LLM view: the GPU metrics that actually predict inference
 /// performance — core vs. memory-bandwidth utilization, VRAM headroom (spill
 /// risk), power/throttle, and which processes hold GPU memory.
@@ -1032,7 +1080,11 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
 
     if c.gpus.is_empty() {
         lines.push(Line::from(Span::styled(
-            "No GPU detected — showing CPU-based inference below.",
+            crate::metrics::gpu::no_gpu_reason(),
+            dim(theme),
+        )));
+        lines.push(Line::from(Span::styled(
+            "AI workloads and inference servers still show below.",
             dim(theme),
         )));
         lines.push(Line::from(Span::raw("")));
@@ -1246,6 +1298,12 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 lines.push(Line::from(stat));
             }
         }
+        lines.push(Line::from(Span::raw("")));
+    } else {
+        lines.push(Line::from(Span::styled(
+            crate::metrics::infer::no_servers_reason(),
+            dim(theme),
+        )));
         lines.push(Line::from(Span::raw("")));
     }
 
@@ -1505,6 +1563,7 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("K / F9", "signal menu"),
         ("Del", "terminate (SIGTERM)"),
         ("x", "kill (SIGKILL)"),
+        ("r", "renice (change priority)"),
         ("p / P", "next / prev theme"),
         ("+ / -", "faster / slower refresh"),
         ("space", "pause / resume"),
