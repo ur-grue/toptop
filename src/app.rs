@@ -8,7 +8,7 @@ use sysinfo::Signal;
 
 use crate::alerts::{self, Alert, AlertConfig};
 use crate::config::Config;
-use crate::metrics::{Collector, Connection, ProcInfo};
+use crate::metrics::{Collector, Connection, ProcInfo, SignalOutcome};
 use crate::theme::{Theme, THEMES};
 
 /// Process table sort columns.
@@ -101,6 +101,23 @@ pub struct PendingKill {
     pub signal: Signal,
 }
 
+/// Signal numbers diverge between the Linux and BSD-derived (macOS/iOS) ABIs.
+/// Only the four we display below differ; the rest share a number everywhere.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod signum {
+    pub const STOP: i32 = 17;
+    pub const CONT: i32 = 19;
+    pub const USR1: i32 = 30;
+    pub const USR2: i32 = 31;
+}
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+mod signum {
+    pub const STOP: i32 = 19;
+    pub const CONT: i32 = 18;
+    pub const USR1: i32 = 10;
+    pub const USR2: i32 = 12;
+}
+
 /// Signals offered by the interactive signal menu (label, number, signal).
 pub const SIGNALS: &[(&str, i32, Signal)] = &[
     ("SIGTERM", 15, Signal::Term),
@@ -108,10 +125,10 @@ pub const SIGNALS: &[(&str, i32, Signal)] = &[
     ("SIGINT", 2, Signal::Interrupt),
     ("SIGHUP", 1, Signal::Hangup),
     ("SIGQUIT", 3, Signal::Quit),
-    ("SIGSTOP", 19, Signal::Stop),
-    ("SIGCONT", 18, Signal::Continue),
-    ("SIGUSR1", 10, Signal::User1),
-    ("SIGUSR2", 12, Signal::User2),
+    ("SIGSTOP", signum::STOP, Signal::Stop),
+    ("SIGCONT", signum::CONT, Signal::Continue),
+    ("SIGUSR1", signum::USR1, Signal::User1),
+    ("SIGUSR2", signum::USR2, Signal::User2),
 ];
 
 /// The whole runtime state.
@@ -220,7 +237,9 @@ impl App {
 
     /// Pull fresh metrics (unless paused) and recompute the process view.
     pub fn on_tick(&mut self) {
-        if !self.paused {
+        // Freeze the process list while a kill confirmation is pending so the
+        // target can't disappear from the table between prompt and confirm.
+        if !self.paused && self.pending_kill.is_none() {
             self.collector.refresh();
         }
         self.rebuild_proc_view();
@@ -467,20 +486,28 @@ impl App {
     /// kill-confirmation prompt.
     fn choose_signal(&mut self) {
         if let Some(idx) = self.signal_menu.take() {
-            let signal = SIGNALS[idx.min(SIGNALS.len() - 1)].2;
+            // idx is always in range: it starts at 0 and every move clamps to
+            // SIGNALS.len() - 1, so index directly.
+            let signal = SIGNALS[idx].2;
             self.request_kill(signal);
         }
     }
 
     fn confirm_kill(&mut self) {
         if let Some(pk) = self.pending_kill.take() {
-            let ok = self.collector.signal_process(pk.pid, pk.signal);
             let sig = signal_name(pk.signal);
-            if ok {
-                self.set_status(format!("Sent {} to {} ({})", sig, pk.name, pk.pid));
-            } else {
-                self.set_status(format!("Failed to signal {} ({})", pk.name, pk.pid));
-            }
+            let msg = match self.collector.signal_process(pk.pid, pk.signal) {
+                SignalOutcome::Delivered => format!("Sent {} to {} ({})", sig, pk.name, pk.pid),
+                SignalOutcome::NotPermitted => format!(
+                    "Permission denied signalling {} ({}) — try running as root",
+                    pk.name, pk.pid
+                ),
+                SignalOutcome::Unsupported => {
+                    format!("{} is not supported on this platform", sig)
+                }
+                SignalOutcome::Gone => format!("{} ({}) already exited", pk.name, pk.pid),
+            };
+            self.set_status(msg);
         }
     }
 
@@ -699,14 +726,19 @@ pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
     }
 }
 
-fn signal_name(sig: Signal) -> &'static str {
+/// Human label for a signal. Covers every signal reachable from the menu; the
+/// single source of truth shared by the confirm prompt and the status line.
+pub fn signal_name(sig: Signal) -> &'static str {
     match sig {
         Signal::Term => "SIGTERM",
         Signal::Kill => "SIGKILL",
         Signal::Interrupt => "SIGINT",
         Signal::Hangup => "SIGHUP",
+        Signal::Quit => "SIGQUIT",
         Signal::Stop => "SIGSTOP",
         Signal::Continue => "SIGCONT",
+        Signal::User1 => "SIGUSR1",
+        Signal::User2 => "SIGUSR2",
         _ => "signal",
     }
 }

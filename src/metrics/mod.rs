@@ -103,8 +103,6 @@ pub struct ProcInfo {
     pub status: char,
     pub status_long: &'static str,
     pub threads: usize,
-    pub exe: String,
-    pub cwd: String,
     /// Indentation depth when rendered as a tree (0 when flat).
     pub depth: usize,
 }
@@ -140,6 +138,7 @@ pub struct Collector {
     /// derive per-process I/O rates.
     prev_proc_io: std::collections::HashMap<u32, (u64, u64)>,
     last_instant: Option<Instant>,
+    last_battery_at: Option<Instant>,
     history_len: usize,
 
     pub host: HostInfo,
@@ -223,6 +222,7 @@ impl Collector {
             infer_monitor: InferenceMonitor::new(),
             prev_proc_io: std::collections::HashMap::new(),
             last_instant: None,
+            last_battery_at: None,
             history_len,
             host,
             cpu,
@@ -280,7 +280,16 @@ impl Collector {
         self.gpus = gpu_snap.gpus;
         self.gpu_procs = gpu_snap.procs;
         self.servers = self.infer_monitor.snapshot();
-        self.battery = read_battery();
+        // Battery level moves on the order of minutes; poll it at most every
+        // 10s rather than doing filesystem I/O on every (up to 4×/s) tick.
+        if self
+            .last_battery_at
+            .map(|t| now.duration_since(t).as_secs() >= 10)
+            .unwrap_or(true)
+        {
+            self.battery = read_battery();
+            self.last_battery_at = Some(now);
+        }
     }
 
     fn refresh_cpu(&mut self) {
@@ -460,14 +469,6 @@ impl Collector {
                 status: status_char(status),
                 status_long: status_label(status),
                 threads: proc_.tasks().map(|t| t.len()).unwrap_or(0),
-                exe: proc_
-                    .exe()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default(),
-                cwd: proc_
-                    .cwd()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_default(),
                 depth: 0,
             });
         }
@@ -505,13 +506,64 @@ impl Collector {
         netconn::collect()
     }
 
-    /// Send a signal to a process. Returns whether the signal was delivered.
-    pub fn signal_process(&self, pid: u32, signal: Signal) -> bool {
-        self.sys
-            .process(Pid::from_u32(pid))
-            .and_then(|p| p.kill_with(signal))
-            .unwrap_or(false)
+    /// Send a signal to a process, distinguishing the ways it can fail so the
+    /// UI can explain what happened instead of a blanket "failed".
+    pub fn signal_process(&mut self, pid: u32, signal: Signal) -> SignalOutcome {
+        let pid = Pid::from_u32(pid);
+        let result = match self.sys.process(pid) {
+            Some(proc_) => proc_.kill_with(signal),
+            None => return SignalOutcome::Gone,
+        };
+        match result {
+            Some(true) => SignalOutcome::Delivered,
+            // kill_with returns None when the signal isn't supported here.
+            None => SignalOutcome::Unsupported,
+            Some(false) => {
+                // kill(2) failed. Re-poll just this PID to tell a permission
+                // error (process still alive) from a process that exited
+                // between selection and confirmation.
+                self.sys.refresh_processes_specifics(
+                    ProcessesToUpdate::Some(&[pid]),
+                    true,
+                    ProcessRefreshKind::nothing(),
+                );
+                if self.sys.process(pid).is_some() {
+                    SignalOutcome::NotPermitted
+                } else {
+                    SignalOutcome::Gone
+                }
+            }
+        }
     }
+
+    /// Resolve the executable path and working directory for a single process,
+    /// fetched on demand for the detail overlay rather than cached per row.
+    pub fn proc_paths(&self, pid: u32) -> (String, String) {
+        match self.sys.process(Pid::from_u32(pid)) {
+            Some(p) => (
+                p.exe()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                p.cwd()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            ),
+            None => (String::new(), String::new()),
+        }
+    }
+}
+
+/// Outcome of attempting to deliver a signal to a process.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SignalOutcome {
+    /// The signal was delivered.
+    Delivered,
+    /// kill(2) failed while the process is still alive — typically EPERM.
+    NotPermitted,
+    /// The signal isn't supported on this platform.
+    Unsupported,
+    /// The process no longer exists.
+    Gone,
 }
 
 fn pct(part: u64, whole: u64) -> f32 {
