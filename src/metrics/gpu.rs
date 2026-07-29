@@ -310,7 +310,7 @@ fn query_nvidia_procs() -> Vec<GpuProc> {
 #[cfg(target_os = "macos")]
 mod apple {
     use std::ffi::{c_void, CString};
-    use std::os::raw::{c_char, c_int};
+    use std::os::raw::{c_char, c_int, c_long};
 
     type CFTypeRef = *const c_void;
     type CFStringRef = *const c_void;
@@ -319,14 +319,16 @@ mod apple {
     type IoObject = u32;
 
     const UTF8: u32 = 0x0800_0100; // kCFStringEncodingUTF8
-    const SINT64: c_int = 4; // kCFNumberSInt64Type
+                                   // kCFNumberSInt64Type. CFNumberType is backed by CFIndex (c_long, 64-bit on
+                                   // macOS), so this must be c_long — a c_int here is an FFI ABI mismatch.
+    const SINT64: c_long = 4;
     const NULL_ALLOC: CFAllocatorRef = std::ptr::null();
 
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         fn CFStringCreateWithCString(a: CFAllocatorRef, s: *const c_char, enc: u32) -> CFStringRef;
         fn CFDictionaryGetValue(d: CFDictionaryRef, k: *const c_void) -> *const c_void;
-        fn CFNumberGetValue(n: *const c_void, t: c_int, v: *mut c_void) -> bool;
+        fn CFNumberGetValue(n: *const c_void, t: c_long, v: *mut c_void) -> bool;
         fn CFRelease(cf: CFTypeRef);
     }
 

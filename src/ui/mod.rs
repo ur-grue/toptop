@@ -1118,9 +1118,16 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                     Style::default().fg(theme.grad(1.0)),
                 )));
             }
-        } else {
+        } else if g.name.contains("Apple") {
             lines.push(Line::from(Span::styled(
                 format!("  {:<10} unified memory (see the memory panel)", "vram"),
+                dim(theme),
+            )));
+        } else {
+            // Some other GPU that didn't report VRAM total — don't claim it's
+            // unified; just show it's unavailable.
+            lines.push(Line::from(Span::styled(
+                format!("  {:<10} --", "vram"),
                 dim(theme),
             )));
         }
