@@ -873,6 +873,10 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     }
     let wrap = inner.width.saturating_sub(14) as usize;
 
+    // Executable path and cwd are resolved on demand for just this process
+    // rather than cached on every row of the table.
+    let (exe, cwd) = app.collector.proc_paths(p.pid);
+
     let started = chrono::DateTime::from_timestamp(p.start_time as i64, 0)
         .map(|dt| {
             dt.with_timezone(&chrono::Local)
@@ -935,12 +939,12 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
         row("Run time", human_duration(p.run_time), theme.fg.color()),
         row(
             "Exe",
-            truncate(if p.exe.is_empty() { "—" } else { &p.exe }, wrap),
+            truncate(if exe.is_empty() { "—" } else { &exe }, wrap),
             theme.fg.color(),
         ),
         row(
             "Cwd",
-            truncate(if p.cwd.is_empty() { "—" } else { &p.cwd }, wrap),
+            truncate(if cwd.is_empty() { "—" } else { &cwd }, wrap),
             theme.fg.color(),
         ),
         row("Command", truncate(&p.cmd, wrap), theme.dim.color()),
@@ -1518,10 +1522,7 @@ fn render_confirm(f: &mut Frame, area: Rect, theme: &Theme, pk: &crate::app::Pen
         ));
     let inner = block.inner(rect);
     f.render_widget(block, rect);
-    let sig = match pk.signal {
-        sysinfo::Signal::Kill => "SIGKILL",
-        _ => "SIGTERM",
-    };
+    let sig = crate::app::signal_name(pk.signal);
     let lines = vec![
         Line::from(vec![
             Span::styled("Send ", Style::default().fg(theme.fg.color())),

@@ -8,7 +8,7 @@ use sysinfo::Signal;
 
 use crate::alerts::{self, Alert, AlertConfig};
 use crate::config::Config;
-use crate::metrics::{Collector, Connection, ProcInfo};
+use crate::metrics::{Collector, Connection, ProcInfo, SignalOutcome};
 use crate::theme::{Theme, THEMES};
 
 /// Process table sort columns.
@@ -102,16 +102,17 @@ pub struct PendingKill {
 }
 
 /// Signals offered by the interactive signal menu (label, number, signal).
+/// Numbers come straight from libc so they are correct on every platform.
 pub const SIGNALS: &[(&str, i32, Signal)] = &[
-    ("SIGTERM", 15, Signal::Term),
-    ("SIGKILL", 9, Signal::Kill),
-    ("SIGINT", 2, Signal::Interrupt),
-    ("SIGHUP", 1, Signal::Hangup),
-    ("SIGQUIT", 3, Signal::Quit),
-    ("SIGSTOP", 19, Signal::Stop),
-    ("SIGCONT", 18, Signal::Continue),
-    ("SIGUSR1", 10, Signal::User1),
-    ("SIGUSR2", 12, Signal::User2),
+    ("SIGTERM", libc::SIGTERM, Signal::Term),
+    ("SIGKILL", libc::SIGKILL, Signal::Kill),
+    ("SIGINT", libc::SIGINT, Signal::Interrupt),
+    ("SIGHUP", libc::SIGHUP, Signal::Hangup),
+    ("SIGQUIT", libc::SIGQUIT, Signal::Quit),
+    ("SIGSTOP", libc::SIGSTOP, Signal::Stop),
+    ("SIGCONT", libc::SIGCONT, Signal::Continue),
+    ("SIGUSR1", libc::SIGUSR1, Signal::User1),
+    ("SIGUSR2", libc::SIGUSR2, Signal::User2),
 ];
 
 /// The whole runtime state.
@@ -220,7 +221,9 @@ impl App {
 
     /// Pull fresh metrics (unless paused) and recompute the process view.
     pub fn on_tick(&mut self) {
-        if !self.paused {
+        // Freeze the process list while a kill confirmation is pending so the
+        // target can't disappear from the table between prompt and confirm.
+        if !self.paused && self.pending_kill.is_none() {
             self.collector.refresh();
         }
         self.rebuild_proc_view();
@@ -467,20 +470,28 @@ impl App {
     /// kill-confirmation prompt.
     fn choose_signal(&mut self) {
         if let Some(idx) = self.signal_menu.take() {
-            let signal = SIGNALS[idx.min(SIGNALS.len() - 1)].2;
+            // idx is always in range: it starts at 0 and every move clamps to
+            // SIGNALS.len() - 1, so index directly.
+            let signal = SIGNALS[idx].2;
             self.request_kill(signal);
         }
     }
 
     fn confirm_kill(&mut self) {
         if let Some(pk) = self.pending_kill.take() {
-            let ok = self.collector.signal_process(pk.pid, pk.signal);
             let sig = signal_name(pk.signal);
-            if ok {
-                self.set_status(format!("Sent {} to {} ({})", sig, pk.name, pk.pid));
-            } else {
-                self.set_status(format!("Failed to signal {} ({})", pk.name, pk.pid));
-            }
+            let msg = match self.collector.signal_process(pk.pid, pk.signal) {
+                SignalOutcome::Delivered => format!("Sent {} to {} ({})", sig, pk.name, pk.pid),
+                SignalOutcome::NotPermitted => format!(
+                    "Permission denied signalling {} ({}) — try running as root",
+                    pk.name, pk.pid
+                ),
+                SignalOutcome::Unsupported => {
+                    format!("{} is not supported on this platform", sig)
+                }
+                SignalOutcome::Gone => format!("{} ({}) already exited", pk.name, pk.pid),
+            };
+            self.set_status(msg);
         }
     }
 
@@ -699,14 +710,19 @@ pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
     }
 }
 
-fn signal_name(sig: Signal) -> &'static str {
+/// Human label for a signal. Covers every signal reachable from the menu; the
+/// single source of truth shared by the confirm prompt and the status line.
+pub fn signal_name(sig: Signal) -> &'static str {
     match sig {
         Signal::Term => "SIGTERM",
         Signal::Kill => "SIGKILL",
         Signal::Interrupt => "SIGINT",
         Signal::Hangup => "SIGHUP",
+        Signal::Quit => "SIGQUIT",
         Signal::Stop => "SIGSTOP",
         Signal::Continue => "SIGCONT",
+        Signal::User1 => "SIGUSR1",
+        Signal::User2 => "SIGUSR2",
         _ => "signal",
     }
 }
