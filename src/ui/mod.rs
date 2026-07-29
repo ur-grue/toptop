@@ -1097,22 +1097,31 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
         }
         lines.push(Line::from(band));
 
-        // VRAM with headroom + spill warning.
-        let mut vram = vec![Span::styled(format!("  {:<10}", "vram"), dim(theme))];
-        vram.extend(graph::meter_spans(mem_pct, bw, theme));
-        vram.push(Span::styled(
-            format!(
-                " {} / {}",
-                human_bytes(g.mem_used),
-                human_bytes(g.mem_total)
-            ),
-            Style::default().fg(theme.grad(mem_pct / 100.0)),
-        ));
-        lines.push(Line::from(vram));
-        if mem_pct >= 90.0 {
+        // VRAM with headroom + spill warning. Apple Silicon has no discrete
+        // VRAM (unified memory) and reports mem_total == 0 — say so honestly
+        // rather than draw a fake 0-byte bar.
+        if g.mem_total > 0 {
+            let mut vram = vec![Span::styled(format!("  {:<10}", "vram"), dim(theme))];
+            vram.extend(graph::meter_spans(mem_pct, bw, theme));
+            vram.push(Span::styled(
+                format!(
+                    " {} / {}",
+                    human_bytes(g.mem_used),
+                    human_bytes(g.mem_total)
+                ),
+                Style::default().fg(theme.grad(mem_pct / 100.0)),
+            ));
+            lines.push(Line::from(vram));
+            if mem_pct >= 90.0 {
+                lines.push(Line::from(Span::styled(
+                    "             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)",
+                    Style::default().fg(theme.grad(1.0)),
+                )));
+            }
+        } else {
             lines.push(Line::from(Span::styled(
-                "             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)",
-                Style::default().fg(theme.grad(1.0)),
+                format!("  {:<10} unified memory (see the memory panel)", "vram"),
+                dim(theme),
             )));
         }
         lines.push(Line::from(Span::raw("")));
