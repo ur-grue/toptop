@@ -103,6 +103,9 @@ pub struct ProcInfo {
     pub status: char,
     pub status_long: &'static str,
     pub threads: usize,
+    /// GPU memory held by this process (bytes), joined from `gpu_procs`; 0 when
+    /// the process holds no VRAM or no GPU is present.
+    pub gpu_mem: u64,
     /// Indentation depth when rendered as a tree (0 when flat).
     pub depth: usize,
 }
@@ -279,6 +282,17 @@ impl Collector {
         let gpu_snap = self.gpu_monitor.snapshot();
         self.gpus = gpu_snap.gpus;
         self.gpu_procs = gpu_snap.procs;
+        // Join per-process VRAM back onto the process list (summing across GPUs)
+        // so the table can show and sort by it. Skipped entirely without a GPU.
+        if !self.gpu_procs.is_empty() {
+            let mut vram: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+            for gp in &self.gpu_procs {
+                *vram.entry(gp.pid).or_insert(0) += gp.used_mem;
+            }
+            for p in &mut self.procs {
+                p.gpu_mem = vram.get(&p.pid).copied().unwrap_or(0);
+            }
+        }
         self.servers = self.infer_monitor.snapshot();
         // Battery level moves on the order of minutes; poll it at most this
         // often rather than doing filesystem I/O on every (up to 4×/s) tick.
@@ -470,6 +484,7 @@ impl Collector {
                 status: status_char(status),
                 status_long: status_label(status),
                 threads: proc_.tasks().map(|t| t.len()).unwrap_or(0),
+                gpu_mem: 0,
                 depth: 0,
             });
         }

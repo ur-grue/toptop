@@ -21,6 +21,7 @@ pub enum SortField {
     User,
     Time,
     Io,
+    Gpu,
 }
 
 impl SortField {
@@ -33,6 +34,7 @@ impl SortField {
             SortField::User => "USER",
             SortField::Time => "TIME",
             SortField::Io => "DISK",
+            SortField::Gpu => "VRAM",
         }
     }
 
@@ -45,7 +47,8 @@ impl SortField {
             SortField::Name => SortField::User,
             SortField::User => SortField::Time,
             SortField::Time => SortField::Io,
-            SortField::Io => SortField::Cpu,
+            SortField::Io => SortField::Gpu,
+            SortField::Gpu => SortField::Cpu,
         }
     }
 }
@@ -298,6 +301,7 @@ impl App {
                 SortField::Io => io_rate(a)
                     .partial_cmp(&io_rate(b))
                     .unwrap_or(std::cmp::Ordering::Equal),
+                SortField::Gpu => a.gpu_mem.cmp(&b.gpu_mem),
             };
             if self.sort_desc {
                 ord.reverse()
@@ -345,6 +349,7 @@ impl App {
                     SortField::Io => io_rate(pa)
                         .partial_cmp(&io_rate(pb))
                         .unwrap_or(std::cmp::Ordering::Equal),
+                    SortField::Gpu => pa.gpu_mem.cmp(&pb.gpu_mem),
                 };
                 if self.sort_desc {
                     ord.reverse()
@@ -690,8 +695,9 @@ pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
         18..=23 => Some(SortField::Cpu),
         24..=37 => Some(SortField::Mem),
         38..=46 => Some(SortField::Io),
-        47..=54 => Some(SortField::Time),
-        55..=56 => None,
+        47..=54 => Some(SortField::Gpu),
+        55..=62 => Some(SortField::Time),
+        63..=64 => None,
         _ => Some(SortField::Name),
     }
 }
