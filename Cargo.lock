@@ -1522,6 +1522,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "crossterm",
+ "libc",
  "ratatui",
  "sysinfo",
 ]

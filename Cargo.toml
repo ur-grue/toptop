@@ -43,6 +43,7 @@ assets = [
 ratatui = "0.30"
 crossterm = "0.29"
 sysinfo = "0.38"
+libc = "0.2"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 

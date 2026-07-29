@@ -101,34 +101,18 @@ pub struct PendingKill {
     pub signal: Signal,
 }
 
-/// Signal numbers diverge between the Linux and BSD-derived (macOS/iOS) ABIs.
-/// Only the four we display below differ; the rest share a number everywhere.
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod signum {
-    pub const STOP: i32 = 17;
-    pub const CONT: i32 = 19;
-    pub const USR1: i32 = 30;
-    pub const USR2: i32 = 31;
-}
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
-mod signum {
-    pub const STOP: i32 = 19;
-    pub const CONT: i32 = 18;
-    pub const USR1: i32 = 10;
-    pub const USR2: i32 = 12;
-}
-
 /// Signals offered by the interactive signal menu (label, number, signal).
+/// Numbers come straight from libc so they are correct on every platform.
 pub const SIGNALS: &[(&str, i32, Signal)] = &[
-    ("SIGTERM", 15, Signal::Term),
-    ("SIGKILL", 9, Signal::Kill),
-    ("SIGINT", 2, Signal::Interrupt),
-    ("SIGHUP", 1, Signal::Hangup),
-    ("SIGQUIT", 3, Signal::Quit),
-    ("SIGSTOP", signum::STOP, Signal::Stop),
-    ("SIGCONT", signum::CONT, Signal::Continue),
-    ("SIGUSR1", signum::USR1, Signal::User1),
-    ("SIGUSR2", signum::USR2, Signal::User2),
+    ("SIGTERM", libc::SIGTERM, Signal::Term),
+    ("SIGKILL", libc::SIGKILL, Signal::Kill),
+    ("SIGINT", libc::SIGINT, Signal::Interrupt),
+    ("SIGHUP", libc::SIGHUP, Signal::Hangup),
+    ("SIGQUIT", libc::SIGQUIT, Signal::Quit),
+    ("SIGSTOP", libc::SIGSTOP, Signal::Stop),
+    ("SIGCONT", libc::SIGCONT, Signal::Continue),
+    ("SIGUSR1", libc::SIGUSR1, Signal::User1),
+    ("SIGUSR2", libc::SIGUSR2, Signal::User2),
 ];
 
 /// The whole runtime state.

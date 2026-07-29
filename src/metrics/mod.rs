@@ -507,32 +507,23 @@ impl Collector {
     }
 
     /// Send a signal to a process, distinguishing the ways it can fail so the
-    /// UI can explain what happened instead of a blanket "failed".
-    pub fn signal_process(&mut self, pid: u32, signal: Signal) -> SignalOutcome {
-        let pid = Pid::from_u32(pid);
-        let result = match self.sys.process(pid) {
-            Some(proc_) => proc_.kill_with(signal),
-            None => return SignalOutcome::Gone,
+    /// UI can explain what happened instead of a blanket "failed". Uses the
+    /// raw `kill(2)` so the exact errno separates permission from liveness.
+    pub fn signal_process(&self, pid: u32, signal: Signal) -> SignalOutcome {
+        let Some(raw) = raw_signal(signal) else {
+            return SignalOutcome::Unsupported;
         };
-        match result {
-            Some(true) => SignalOutcome::Delivered,
-            // kill_with returns None when the signal isn't supported here.
-            None => SignalOutcome::Unsupported,
-            Some(false) => {
-                // kill(2) failed. Re-poll just this PID to tell a permission
-                // error (process still alive) from a process that exited
-                // between selection and confirmation.
-                self.sys.refresh_processes_specifics(
-                    ProcessesToUpdate::Some(&[pid]),
-                    true,
-                    ProcessRefreshKind::nothing(),
-                );
-                if self.sys.process(pid).is_some() {
-                    SignalOutcome::NotPermitted
-                } else {
-                    SignalOutcome::Gone
-                }
-            }
+        // SAFETY: kill() only inspects its integer arguments and has no memory
+        // effects; we read errno via last_os_error() only when it fails.
+        let rc = unsafe { libc::kill(pid as libc::pid_t, raw) };
+        if rc == 0 {
+            return SignalOutcome::Delivered;
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EPERM) => SignalOutcome::NotPermitted,
+            Some(libc::ESRCH) => SignalOutcome::Gone,
+            Some(libc::EINVAL) => SignalOutcome::Unsupported,
+            _ => SignalOutcome::Gone,
         }
     }
 
@@ -551,6 +542,23 @@ impl Collector {
             None => (String::new(), String::new()),
         }
     }
+}
+
+/// Map a sysinfo `Signal` to its platform signal number, or `None` if it is
+/// not one we support delivering.
+fn raw_signal(sig: Signal) -> Option<i32> {
+    Some(match sig {
+        Signal::Term => libc::SIGTERM,
+        Signal::Kill => libc::SIGKILL,
+        Signal::Interrupt => libc::SIGINT,
+        Signal::Hangup => libc::SIGHUP,
+        Signal::Quit => libc::SIGQUIT,
+        Signal::Stop => libc::SIGSTOP,
+        Signal::Continue => libc::SIGCONT,
+        Signal::User1 => libc::SIGUSR1,
+        Signal::User2 => libc::SIGUSR2,
+        _ => return None,
+    })
 }
 
 /// Outcome of attempting to deliver a signal to a process.

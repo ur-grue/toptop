@@ -11,10 +11,7 @@ fn delivers_signal_to_owned_process() {
     let mut child = Command::new("sleep").arg("30").spawn().expect("spawn sleep");
     let pid = child.id();
 
-    let mut collector = Collector::new(64);
-    // Populate the process cache so the target is resolvable.
-    collector.refresh();
-
+    let collector = Collector::new(64);
     let outcome = collector.signal_process(pid, Signal::Kill);
     assert_eq!(outcome, SignalOutcome::Delivered);
 
@@ -27,11 +24,25 @@ fn delivers_signal_to_owned_process() {
 
 #[test]
 fn reports_gone_for_unknown_pid() {
-    let mut collector = Collector::new(64);
-    collector.refresh();
+    let collector = Collector::new(64);
     // A PID that is essentially never live.
     assert_eq!(
         collector.signal_process(0x7FFF_FFF0, Signal::Term),
         SignalOutcome::Gone
+    );
+}
+
+#[test]
+fn reports_permission_denied_for_foreign_process() {
+    // Running as root can signal anything, so the guarantee doesn't hold.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    // PID 1 (init/launchd) is root-owned; kill(2) fails with EPERM before
+    // delivering, so PID 1 is unaffected.
+    let collector = Collector::new(64);
+    assert_eq!(
+        collector.signal_process(1, Signal::Continue),
+        SignalOutcome::NotPermitted
     );
 }
