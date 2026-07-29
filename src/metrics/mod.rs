@@ -528,6 +528,24 @@ impl Collector {
         }
     }
 
+    /// Change a process's nice value (scheduling priority). Mirrors
+    /// `signal_process`'s outcome classification via the raw `setpriority(2)`
+    /// errno — raising priority (a lower nice) or renicing another user's
+    /// process needs privilege.
+    pub fn set_priority(&self, pid: u32, nice: i32) -> PriorityOutcome {
+        // SAFETY: setpriority() only inspects its integer arguments; we read
+        // errno via last_os_error() only when it fails.
+        let rc = unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, nice) };
+        if rc == 0 {
+            return PriorityOutcome::Applied;
+        }
+        match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::EPERM) | Some(libc::EACCES) => PriorityOutcome::NotPermitted,
+            Some(libc::ESRCH) => PriorityOutcome::Gone,
+            _ => PriorityOutcome::Gone,
+        }
+    }
+
     /// Resolve the executable path and working directory for a single process,
     /// fetched on demand for the detail overlay rather than cached per row.
     pub fn proc_paths(&self, pid: u32) -> (String, String) {
@@ -587,6 +605,17 @@ pub enum SignalOutcome {
     NotPermitted,
     /// The signal isn't supported on this platform.
     Unsupported,
+    /// The process no longer exists.
+    Gone,
+}
+
+/// Outcome of attempting to change a process's nice value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PriorityOutcome {
+    /// The nice value was set.
+    Applied,
+    /// The caller lacks privilege (raising priority, or another user's process).
+    NotPermitted,
     /// The process no longer exists.
     Gone,
 }
