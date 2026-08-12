@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--config <path>` — use an explicit config file instead of
+  `$XDG_CONFIG_HOME/toptop/config.conf`, and `--no-save` — don't write the
+  config back on exit. A failed config save is now reported as a one-line
+  stderr warning after the TUI shuts down instead of being silently
+  swallowed. (#15)
 - `--export csv` — the top processes as CSV (header row, RFC 4180 quoting) for
   spreadsheets and `awk`, alongside the existing `json` and `prometheus`
   exporters. (#16)

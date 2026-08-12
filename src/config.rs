@@ -2,10 +2,13 @@
 //!
 //! Settings are read from `$XDG_CONFIG_HOME/toptop/config.conf` (falling back to
 //! `~/.config/...`) as simple `key = value` lines, and overridable from the CLI.
-//! Persisting failures are non-fatal — the monitor always runs with defaults.
+//! `--config <path>` substitutes an explicit file for the default location.
+//! Persisting failures are non-fatal — the monitor always runs with defaults,
+//! and a failed save is reported as a one-line warning on exit.
 
 use std::fs;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 
 use crate::app::LayoutPreset;
 use crate::theme;
@@ -46,13 +49,19 @@ impl Config {
         Some(base.join("toptop").join("config.conf"))
     }
 
-    /// Load config from disk, ignoring any errors and falling back to defaults.
+    /// Load config from the default location, falling back to defaults.
     pub fn load() -> Self {
+        match Self::path() {
+            Some(path) => Self::load_path(&path),
+            None => Config::default(),
+        }
+    }
+
+    /// Load config from an explicit file (`--config`), ignoring any errors
+    /// and falling back to defaults.
+    pub fn load_path(path: &Path) -> Self {
         let mut cfg = Config::default();
-        let Some(path) = Self::path() else {
-            return cfg;
-        };
-        let Ok(contents) = fs::read_to_string(&path) else {
+        let Ok(contents) = fs::read_to_string(path) else {
             return cfg;
         };
         for line in contents.lines() {
@@ -85,13 +94,21 @@ impl Config {
         cfg
     }
 
-    /// Persist the current config. Errors are intentionally swallowed.
-    pub fn save(&self) {
-        let Some(path) = Self::path() else {
-            return;
-        };
+    /// Persist the current config to the default location.
+    pub fn save(&self) -> io::Result<()> {
+        let path = Self::path().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "cannot resolve config path (HOME and XDG_CONFIG_HOME unset)",
+            )
+        })?;
+        self.save_path(&path)
+    }
+
+    /// Persist the current config to an explicit file (`--config`).
+    pub fn save_path(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fs::create_dir_all(parent)?;
         }
         let theme_name = theme::THEMES
             .get(self.theme_idx)
@@ -110,7 +127,7 @@ impl Config {
             self.per_core,
             self.layout.label()
         );
-        let _ = fs::write(path, body);
+        fs::write(path, body)
     }
 }
 
@@ -138,5 +155,43 @@ mod tests {
         assert_eq!(parse_bool("yes"), Some(true));
         assert_eq!(parse_bool("OFF"), Some(false));
         assert_eq!(parse_bool("maybe"), None);
+    }
+
+    /// A scratch path unique to this test process.
+    fn scratch(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("toptop-cfg-test-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn save_and_load_explicit_path_round_trips() {
+        let path = scratch("roundtrip").join("config.conf");
+        let cfg = Config {
+            tick_ms: 2500,
+            tree: true,
+            per_core: false,
+            ..Config::default()
+        };
+        cfg.save_path(&path).expect("save should succeed");
+        let loaded = Config::load_path(&path);
+        assert_eq!(loaded.tick_ms, 2500);
+        assert!(loaded.tree);
+        assert!(!loaded.per_core);
+        fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn load_missing_explicit_path_falls_back_to_defaults() {
+        let cfg = Config::load_path(Path::new("/nonexistent/toptop/config.conf"));
+        assert_eq!(cfg.tick_ms, Config::default().tick_ms);
+    }
+
+    #[test]
+    fn save_to_unwritable_path_reports_the_error() {
+        // The parent "directory" is a regular file, so the save must fail.
+        let blocker = scratch("blocker");
+        fs::write(&blocker, "not a directory").unwrap();
+        let cfg = Config::default();
+        assert!(cfg.save_path(&blocker.join("config.conf")).is_err());
+        fs::remove_file(&blocker).ok();
     }
 }

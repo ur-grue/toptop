@@ -5,6 +5,7 @@
 //! even on an unexpected crash.
 
 use std::io::{self, Stdout, Write};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -39,6 +40,8 @@ OPTIONS:
         --remote <HOSTS> Multi-host fleet view; comma-separated SSH hosts
                          (use 'local' for this machine)
         --remote-cmd <C> Command run on each remote (default: toptop --export json)
+        --config <PATH>  Use an explicit config file (default: ~/.config/toptop/config.conf)
+        --no-save        Don't write the config back on exit
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default), 'csv', or 'prometheus'
@@ -51,7 +54,26 @@ KEYS (in-app, press ? for the full list):
 ";
 
 fn main() -> Result<()> {
-    let mut cfg = Config::load();
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+
+    // `--config` must be known before the config file is loaded, so resolve
+    // it up front; the parse loop below skips over it.
+    let config_path: Option<PathBuf> = argv
+        .iter()
+        .position(|a| a == "--config")
+        .map(|i| {
+            argv.get(i + 1)
+                .filter(|p| !p.starts_with('-'))
+                .map(PathBuf::from)
+                .context("--config requires a file path")
+        })
+        .transpose()?;
+
+    let mut cfg = match &config_path {
+        Some(path) => Config::load_path(path),
+        None => Config::load(),
+    };
+    let mut no_save = false;
     let mut snapshot = false;
     let mut export: Option<&'static str> = None;
     let mut start_ai = false;
@@ -59,7 +81,7 @@ fn main() -> Result<()> {
     let mut remote_cmd = "toptop --export json".to_string();
     let mut serve_addr: Option<String> = None;
 
-    let mut args = std::env::args().skip(1).peekable();
+    let mut args = argv.iter().peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
@@ -86,7 +108,7 @@ fn main() -> Result<()> {
             }
             "--theme" => {
                 let name = args.next().context("--theme requires a name")?;
-                cfg.theme_idx = theme::index_by_name(&name)
+                cfg.theme_idx = theme::index_by_name(name)
                     .with_context(|| format!("unknown theme '{name}' (try --list-themes)"))?;
             }
             "--tree" => cfg.tree = true,
@@ -103,12 +125,20 @@ fn main() -> Result<()> {
                     .collect();
             }
             "--remote-cmd" => {
-                remote_cmd = args.next().context("--remote-cmd requires a command")?;
+                remote_cmd = args
+                    .next()
+                    .context("--remote-cmd requires a command")?
+                    .clone();
             }
+            "--config" => {
+                // Already resolved in the pre-scan above; skip the value.
+                args.next();
+            }
+            "--no-save" => no_save = true,
             "--serve-metrics" => {
                 // Optional address argument; defaults to localhost:9709.
                 let addr = match args.peek() {
-                    Some(a) if !a.starts_with('-') => args.next().unwrap(),
+                    Some(a) if !a.starts_with('-') => args.next().unwrap().clone(),
                     _ => "127.0.0.1:9709".to_string(),
                 };
                 serve_addr = Some(addr);
@@ -165,7 +195,16 @@ fn main() -> Result<()> {
     let mut terminal = setup_terminal().context("failed to initialize terminal")?;
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal).ok();
-    app.config().save();
+    if !no_save {
+        // The terminal is restored, so a warning lands on a usable stderr.
+        let saved = match &config_path {
+            Some(path) => app.config().save_path(path),
+            None => app.config().save(),
+        };
+        if let Err(e) = saved {
+            eprintln!("toptop: warning: failed to save config: {e}");
+        }
+    }
     result
 }
 
