@@ -162,8 +162,18 @@ pub struct Collector {
     pub gpu_procs: Vec<GpuProc>,
     /// Auto-discovered local inference servers (tokens/sec, KV cache, …).
     pub servers: Vec<ServerStats>,
+    /// Per-server time series (keyed by pid+port) feeding the AI-view
+    /// sparklines; pruned when a server disappears.
+    pub server_history: std::collections::HashMap<(u32, u16), ServerHistory>,
     pub battery: Option<Battery>,
     pub uptime: u64,
+}
+
+/// Tokens/sec and KV-cache trends for one inference server.
+#[derive(Clone, Debug)]
+pub struct ServerHistory {
+    pub tps: History,
+    pub kv: History,
 }
 
 impl Collector {
@@ -247,6 +257,7 @@ impl Collector {
             gpus: Vec::new(),
             gpu_procs: Vec::new(),
             servers: Vec::new(),
+            server_history: std::collections::HashMap::new(),
             battery: None,
             uptime: 0,
         };
@@ -294,6 +305,7 @@ impl Collector {
             }
         }
         self.servers = self.infer_monitor.snapshot();
+        self.update_server_history();
         // Battery level moves on the order of minutes; poll it at most this
         // often rather than doing filesystem I/O on every (up to 4×/s) tick.
         const BATTERY_POLL: Duration = Duration::from_secs(10);
@@ -304,6 +316,25 @@ impl Collector {
         {
             self.battery = read_battery();
             self.last_battery_at = Some(now);
+        }
+    }
+
+    /// Append this tick's tokens/sec and KV% to each live server's history,
+    /// dropping the histories of servers that vanished.
+    fn update_server_history(&mut self) {
+        let live: std::collections::HashSet<(u32, u16)> =
+            self.servers.iter().map(|s| (s.pid, s.port)).collect();
+        self.server_history.retain(|k, _| live.contains(k));
+        for sv in &self.servers {
+            let h = self
+                .server_history
+                .entry((sv.pid, sv.port))
+                .or_insert_with(|| ServerHistory {
+                    tps: History::new(self.history_len),
+                    kv: History::new(self.history_len),
+                });
+            h.tps.push(sv.gen_tps.unwrap_or(0.0));
+            h.kv.push(sv.kv_pct.unwrap_or(0.0));
         }
     }
 
@@ -701,5 +732,36 @@ fn status_char(status: ProcessStatus) -> char {
         ProcessStatus::UninterruptibleDiskSleep => 'D',
         ProcessStatus::Suspended => 'U',
         ProcessStatus::Unknown(_) => '?',
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_history_tracks_and_prunes() {
+        let mut c = Collector::new(16);
+        c.servers = vec![ServerStats {
+            runtime: "vLLM",
+            pid: 1,
+            port: 8000,
+            gen_tps: Some(10.0),
+            kv_pct: Some(50.0),
+            ..Default::default()
+        }];
+        c.update_server_history();
+        c.servers[0].gen_tps = Some(20.0);
+        c.servers[0].kv_pct = None; // metric momentarily absent → recorded as 0
+        c.update_server_history();
+
+        let h = c.server_history.get(&(1, 8000)).expect("history exists");
+        assert_eq!(h.tps.tail(2), vec![10.0, 20.0]);
+        assert_eq!(h.kv.tail(2), vec![50.0, 0.0]);
+
+        // The server disappears → its history is pruned.
+        c.servers.clear();
+        c.update_server_history();
+        assert!(c.server_history.is_empty());
     }
 }
