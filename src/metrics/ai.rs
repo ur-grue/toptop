@@ -48,6 +48,7 @@ const RUNTIMES: &[(&str, &str, AiKind)] = &[
     ("tabbyapi", "TabbyAPI", Serving),
     ("comfyui", "ComfyUI", Serving),
     ("text-generation-webui", "TGW", Serving),
+    ("mlc_llm", "MLC LLM", Serving),
     // ── Training / fine-tuning ───────────────────────────────────────────────
     ("torchrun", "PyTorch", Training),
     ("deepspeed", "DeepSpeed", Training),
@@ -136,5 +137,16 @@ mod tests {
     fn avoids_false_positives() {
         assert_eq!(inference_runtime("bash", "bash -c 'echo hi'"), None);
         assert_eq!(inference_runtime("svllmx", "/usr/bin/svllmx"), None);
+    }
+
+    #[test]
+    fn detects_mlc_llm() {
+        let r = detect_runtime("mlc_llm", "mlc_llm serve HF://mlc-ai/Llama-3-8B-Instruct").unwrap();
+        assert_eq!(r.label, "MLC LLM");
+        assert_eq!(r.kind, AiKind::Serving);
+        assert_eq!(
+            inference_runtime("python3", "python3 -m mlc_llm.serve --model ./dist/model"),
+            Some("MLC LLM")
+        );
     }
 }

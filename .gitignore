@@ -1,4 +1,1 @@
-/target
-/dist
-**/*.rs.bk
-Cargo.lock.orig
+.DS_Store

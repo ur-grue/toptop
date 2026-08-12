@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   KV-cache % (scaled to 100) next to the instantaneous numbers, fed by
   per-server 256-sample histories that are pruned when a server goes
   away. (#30)
+- `--config <path>` — use an explicit config file instead of
+  `$XDG_CONFIG_HOME/toptop/config.conf`, and `--no-save` — don't write the
+  config back on exit. A failed config save is now reported as a one-line
+  stderr warning after the TUI shuts down instead of being silently
+  swallowed. (#15)
+- **Configurable alert thresholds** — the VRAM-spill, KV-cache-saturation and
+  queue-backlog alert levels can now be tuned via `config.conf`
+  (`alert_vram_pct`, `alert_kv_pct`, `alert_queue`) or CLI flags
+  (`--alert-vram`, `--alert-kv`, `--alert-queue`). The thresholds apply to the
+  TUI banner, `--export prometheus`, and the `--serve-metrics` endpoint. (#6)
 - `--export csv` — the top processes as CSV (header row, RFC 4180 quoting) for
   spreadsheets and `awk`, alongside the existing `json` and `prometheus`
   exporters. (#16)
