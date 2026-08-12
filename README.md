@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-68%20green-success)
+![Tests](https://img.shields.io/badge/tests-113%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
