@@ -142,7 +142,10 @@ mod tests {
         );
         // macOS-style process name with a space.
         assert_eq!(
-            inference_runtime("LM Studio", "/Applications/LM Studio.app/Contents/MacOS/LM Studio"),
+            inference_runtime(
+                "LM Studio",
+                "/Applications/LM Studio.app/Contents/MacOS/LM Studio"
+            ),
             Some("LM Studio")
         );
     }

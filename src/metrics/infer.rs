@@ -682,7 +682,8 @@ mod tests {
             parse_lmstudio_loaded_model(json).as_deref(),
             Some("llama-3.2-3b-instruct")
         );
-        let none_loaded = r#"{"data":[{"id":"a","state":"not-loaded"},{"id":"b","state":"not-loaded"}]}"#;
+        let none_loaded =
+            r#"{"data":[{"id":"a","state":"not-loaded"},{"id":"b","state":"not-loaded"}]}"#;
         assert_eq!(parse_lmstudio_loaded_model(none_loaded), None);
     }
 
