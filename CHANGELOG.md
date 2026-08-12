@@ -19,11 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-request histogram sums) and a mean time-to-first-token estimated from
   its pipeline stages (validation + queue wait + prefill), alongside the
   existing batch-size and queue-depth gauges. (#10)
-- **TGI throughput and TTFT** — discovered Text Generation Inference servers
-  now show generated and prefill tokens/sec (derived from TGI's cumulative
-  per-request histogram sums) and a mean time-to-first-token estimated from
-  its pipeline stages (validation + queue wait + prefill), alongside the
-  existing batch-size and queue-depth gauges. (#10)
 - **AI-view trend sparklines** — each discovered inference server now shows
   nvtop-style braille sparklines of tokens/sec (scaled to its own peak) and
   KV-cache % (scaled to 100) next to the instantaneous numbers, fed by
@@ -69,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Shell completions (bash/zsh/fish) now cover every flag — `--ai`, `--remote`,
+  `--remote-cmd`, `--config`, `--no-save`, `--export`, `--serve-metrics` and
+  the `--alert-*` family were missing — and the theme list includes
+  `cyberpunk` and `paper`. Tests badge bumped to 113.
 - Recolored the AI-view hero graphic to the default `gruvbox` theme so it
   matches what users see on first launch. (#24)
 - Documented the signal-menu permission-denied behavior. (#23)

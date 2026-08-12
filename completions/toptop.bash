@@ -5,15 +5,23 @@ _toptop() {
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
-    opts="-t --tick --theme --tree --no-tree --list-themes --snapshot -h --help -V --version"
-    themes="gruvbox nord dracula tokyonight matrix"
+    opts="-t --tick --theme --tree --no-tree --ai --remote --remote-cmd --config --no-save --list-themes --snapshot --export --serve-metrics --alert-vram --alert-kv --alert-queue -h --help -V --version"
+    themes="gruvbox nord dracula tokyonight matrix cyberpunk paper"
 
     case "$prev" in
         --theme)
             COMPREPLY=( $(compgen -W "$themes" -- "$cur") )
             return 0
             ;;
-        -t|--tick)
+        --export)
+            COMPREPLY=( $(compgen -W "json csv prometheus" -- "$cur") )
+            return 0
+            ;;
+        --config)
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            return 0
+            ;;
+        -t|--tick|--remote|--remote-cmd|--serve-metrics|--alert-vram|--alert-kv|--alert-queue)
             return 0
             ;;
     esac

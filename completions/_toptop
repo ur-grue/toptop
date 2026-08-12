@@ -8,8 +8,18 @@ _toptop() {
         '--theme[color theme]:theme:(gruvbox nord dracula tokyonight matrix cyberpunk paper)' \
         '--tree[start in process-tree view]' \
         '--no-tree[start in flat process view]' \
+        '--ai[open the AI / local-LLM GPU view on launch]' \
+        '--remote[multi-host fleet view]:comma-separated SSH hosts:' \
+        '--remote-cmd[command run on each remote]:command:' \
+        '--config[use an explicit config file]:config file:_files' \
+        '--no-save[do not write the config back on exit]' \
         '--list-themes[print available themes and exit]' \
         '--snapshot[print a one-shot text snapshot and exit]' \
+        '--export[print metrics and exit]::format:(json csv prometheus)' \
+        '--serve-metrics[run a Prometheus metrics endpoint]::address:' \
+        '--alert-vram[VRAM % that triggers the spill-risk alert]:percent:' \
+        '--alert-kv[KV-cache % considered saturated]:percent:' \
+        '--alert-queue[queued requests considered a backlog]:count:' \
         '(-h --help)'{-h,--help}'[show help and exit]' \
         '(-V --version)'{-V,--version}'[show version and exit]'
 }
