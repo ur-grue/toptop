@@ -300,6 +300,8 @@ OPTIONS:
         --ai             Open the AI / local‑LLM GPU view on launch
         --remote <HOSTS> Multi‑host fleet view (comma‑separated SSH hosts; 'local')
         --remote-cmd <C> Command run on each remote (default: toptop --export json)
+        --config <PATH>  Use an explicit config file (default: ~/.config/toptop/config.conf)
+        --no-save        Don't write the config back on exit
         --list-themes    Print available themes and exit
         --snapshot       Print a one‑shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
@@ -387,7 +389,8 @@ cp completions/toptop.fish ~/.config/fish/completions/   # fish
 
 Settings live at `~/.config/toptop/config.conf` (honoring `XDG_CONFIG_HOME`) and are written
 on exit, so your theme, refresh rate, tree mode and layout persist between runs. CLI flags
-always override the file.
+always override the file. Point `--config <path>` at an explicit file (handy for testing and
+dotfile setups), or pass `--no-save` to leave the file untouched on exit.
 
 Alert thresholds (VRAM spill, KV‑cache saturation, queue backlog) are tunable there too:
 
