@@ -130,6 +130,55 @@ fn ai_view_renders() {
 }
 
 #[test]
+fn ai_view_renders_history_sparklines() {
+    use toptop::history::History;
+    use toptop::metrics::ServerHistory;
+
+    let mut app = App::new(&Config::default());
+    app.show_ai = true;
+    app.collector.servers = vec![toptop::metrics::ServerStats {
+        runtime: "vLLM",
+        pid: 4242,
+        port: 8000,
+        model: "meta-llama/Llama-3-8B".into(),
+        gen_tps: Some(83.4),
+        kv_pct: Some(64.0),
+        ..Default::default()
+    }];
+    let mut tps = History::new(64);
+    let mut kv = History::new(64);
+    for i in 0..40 {
+        tps.push(40.0 + (i % 10) as f64 * 5.0);
+        kv.push(30.0 + i as f64);
+    }
+    app.collector
+        .server_history
+        .insert((4242, 8000), ServerHistory { tps, kv });
+
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|f| ui::draw(f, &mut app))
+        .expect("draw must not panic");
+    let content: String = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect();
+    assert!(content.contains("tok/s"), "sparkline label must render");
+    let has_braille = content
+        .chars()
+        .any(|ch| ('\u{2800}'..='\u{28FF}').contains(&ch));
+    assert!(has_braille, "sparkline must draw braille cells");
+
+    // Degenerate sizes must not panic (sparklines are skipped when cramped).
+    render_at(&mut app, 40, 10);
+    render_at(&mut app, 12, 4);
+}
+
+#[test]
 fn layout_presets_render() {
     let mut app = App::new(&Config::default());
     // Cycle through every layout preset and render the full body each time.

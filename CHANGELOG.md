@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-request histogram sums) and a mean time-to-first-token estimated from
   its pipeline stages (validation + queue wait + prefill), alongside the
   existing batch-size and queue-depth gauges. (#10)
+- **AI-view trend sparklines** — each discovered inference server now shows
+  nvtop-style braille sparklines of tokens/sec (scaled to its own peak) and
+  KV-cache % (scaled to 100) next to the instantaneous numbers, fed by
+  per-server 256-sample histories that are pruned when a server goes
+  away. (#30)
 - `--config <path>` — use an explicit config file instead of
   `$XDG_CONFIG_HOME/toptop/config.conf`, and `--no-save` — don't write the
   config back on exit. A failed config save is now reported as a one-line
