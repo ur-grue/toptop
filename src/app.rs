@@ -764,3 +764,222 @@ pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
         _ => Some(SortField::Name),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proc(pid: u32, ppid: Option<u32>, name: &str, cpu: f32, mem: u64) -> ProcInfo {
+        ProcInfo {
+            pid,
+            ppid,
+            name: name.into(),
+            cmd: format!("/usr/bin/{name}"),
+            user: "root".into(),
+            cpu,
+            mem_pct: 0.0,
+            mem_bytes: mem,
+            virt: 0,
+            disk_read: 0,
+            disk_written: 0,
+            io_read_rate: 0.0,
+            io_write_rate: 0.0,
+            start_time: 0,
+            run_time: pid as u64,
+            status: 'S',
+            status_long: "Sleeping",
+            threads: 1,
+            gpu_mem: 0,
+            depth: 0,
+        }
+    }
+
+    /// An App whose process table is exactly `procs` (no live refresh has run).
+    fn app_with(procs: Vec<ProcInfo>) -> App {
+        let mut app = App::new(&Config::default());
+        app.collector.procs = procs;
+        app.selected_pid = None;
+        app.rebuild_proc_view();
+        app
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::empty())
+    }
+
+    fn pids(app: &App) -> Vec<u32> {
+        app.proc_view.iter().map(|p| p.pid).collect()
+    }
+
+    #[test]
+    fn sorts_by_cpu_descending_by_default_and_inverts() {
+        let mut app = app_with(vec![
+            proc(1, None, "low", 1.0, 0),
+            proc(2, None, "high", 9.0, 0),
+            proc(3, None, "mid", 5.0, 0),
+        ]);
+        assert_eq!(app.sort, SortField::Cpu);
+        assert!(app.sort_desc);
+        assert_eq!(pids(&app), vec![2, 3, 1]);
+
+        app.on_key(key(KeyCode::Char('i')));
+        assert!(!app.sort_desc);
+        assert_eq!(pids(&app), vec![1, 3, 2]);
+    }
+
+    #[test]
+    fn sort_fields_use_their_own_keys() {
+        let mut app = app_with(vec![
+            proc(30, None, "Zsh", 1.0, 100),
+            proc(10, None, "bash", 2.0, 300),
+            proc(20, None, "Fish", 3.0, 200),
+        ]);
+        app.sort = SortField::Mem;
+        app.rebuild_proc_view();
+        assert_eq!(pids(&app), vec![10, 20, 30]);
+
+        app.sort = SortField::Pid;
+        app.rebuild_proc_view();
+        assert_eq!(pids(&app), vec![30, 20, 10]);
+
+        // Name sorting is case-insensitive: bash < Fish < Zsh, descending.
+        app.sort = SortField::Name;
+        app.rebuild_proc_view();
+        assert_eq!(pids(&app), vec![30, 20, 10]);
+    }
+
+    #[test]
+    fn filter_matches_name_cmd_user_and_pid_case_insensitively() {
+        let mut app = app_with(vec![
+            proc(100, None, "Firefox", 1.0, 0),
+            proc(200, None, "vllm", 2.0, 0),
+            proc(300, None, "bash", 3.0, 0),
+        ]);
+        app.filter = "FIRE".into();
+        app.rebuild_proc_view();
+        assert_eq!(pids(&app), vec![100]);
+
+        // cmdline matches too ("/usr/bin/vllm").
+        app.filter = "usr/bin/vllm".into();
+        app.rebuild_proc_view();
+        assert_eq!(pids(&app), vec![200]);
+
+        // A numeric filter matches the PID.
+        app.filter = "300".into();
+        app.rebuild_proc_view();
+        assert_eq!(pids(&app), vec![300]);
+
+        app.filter = "no-such-thing".into();
+        app.rebuild_proc_view();
+        assert!(app.proc_view.is_empty());
+    }
+
+    #[test]
+    fn filter_key_flow_narrows_and_esc_clears() {
+        let mut app = app_with(vec![
+            proc(1, None, "alpha", 1.0, 0),
+            proc(2, None, "beta", 2.0, 0),
+        ]);
+        app.on_key(key(KeyCode::Char('/')));
+        assert!(app.filter_mode);
+        app.on_key(key(KeyCode::Char('b')));
+        app.on_key(key(KeyCode::Char('e')));
+        assert_eq!(pids(&app), vec![2]);
+
+        // Enter applies the filter; Esc (outside filter mode) then clears it.
+        app.on_key(key(KeyCode::Enter));
+        assert!(!app.filter_mode);
+        assert_eq!(app.filter, "be");
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.filter.is_empty());
+        assert_eq!(pids(&app), vec![2, 1]);
+    }
+
+    #[test]
+    fn tree_orders_parents_before_children_with_depths() {
+        let mut app = app_with(vec![
+            proc(4, Some(2), "grandchild", 9.0, 0),
+            proc(2, Some(1), "child-busy", 5.0, 0),
+            proc(3, Some(1), "child-idle", 1.0, 0),
+            proc(1, None, "init", 0.0, 0),
+        ]);
+        app.tree = true;
+        app.rebuild_proc_view();
+        // DFS from the root; siblings keep the CPU-descending sort.
+        assert_eq!(pids(&app), vec![1, 2, 4, 3]);
+        let depths: Vec<usize> = app.proc_view.iter().map(|p| p.depth).collect();
+        assert_eq!(depths, vec![0, 1, 2, 1]);
+    }
+
+    #[test]
+    fn tree_keeps_orphans_and_survives_cycles() {
+        let mut app = app_with(vec![
+            proc(1, None, "init", 1.0, 0),
+            // Parent not in the table: treated as a root, not dropped.
+            proc(7, Some(999), "orphan", 2.0, 0),
+            // A ppid cycle: both rows must still be shown.
+            proc(8, Some(9), "cyclic-a", 3.0, 0),
+            proc(9, Some(8), "cyclic-b", 4.0, 0),
+        ]);
+        app.tree = true;
+        app.rebuild_proc_view();
+        let mut got = pids(&app);
+        got.sort_unstable();
+        assert_eq!(got, vec![1, 7, 8, 9]);
+    }
+
+    #[test]
+    fn filter_takes_precedence_over_tree() {
+        let mut app = app_with(vec![
+            proc(1, None, "init", 1.0, 0),
+            proc(2, Some(1), "match-me", 5.0, 0),
+        ]);
+        app.tree = true;
+        app.filter = "match".into();
+        app.rebuild_proc_view();
+        // Flat, filtered result — no tree indentation.
+        assert_eq!(pids(&app), vec![2]);
+        assert_eq!(app.proc_view[0].depth, 0);
+    }
+
+    #[test]
+    fn selection_follows_pid_and_falls_back_when_it_vanishes() {
+        let mut app = app_with(vec![
+            proc(1, None, "a", 3.0, 0),
+            proc(2, None, "b", 2.0, 0),
+            proc(3, None, "c", 1.0, 0),
+        ]);
+        // Selection defaults to the first row and moves with clamping.
+        assert_eq!(app.selected_pid, Some(1));
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.selected_pid, Some(2));
+        app.on_key(key(KeyCode::End));
+        assert_eq!(app.selected_pid, Some(3));
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.selected_pid, Some(3), "must clamp at the last row");
+        app.on_key(key(KeyCode::Home));
+        assert_eq!(app.selected_pid, Some(1));
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.selected_pid, Some(1), "must clamp at the first row");
+
+        // The selected PID survives a re-sort…
+        app.on_key(key(KeyCode::Down));
+        app.sort = SortField::Pid;
+        app.rebuild_proc_view();
+        assert_eq!(app.selected_pid, Some(2));
+
+        // …and falls back to the first row when the process disappears.
+        app.collector.procs.retain(|p| p.pid != 2);
+        app.rebuild_proc_view();
+        assert_eq!(app.selected_pid, app.proc_view.first().map(|p| p.pid));
+    }
+
+    #[test]
+    fn header_click_map_matches_column_layout() {
+        assert_eq!(header_sort_at(0), Some(SortField::Pid));
+        assert_eq!(header_sort_at(18), Some(SortField::Cpu));
+        assert_eq!(header_sort_at(40), Some(SortField::Io));
+        assert_eq!(header_sort_at(63), None);
+        assert_eq!(header_sort_at(120), Some(SortField::Name));
+    }
+}
