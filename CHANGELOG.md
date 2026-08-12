@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TGI throughput and TTFT** — discovered Text Generation Inference servers
+  now show generated and prefill tokens/sec (derived from TGI's cumulative
+  per-request histogram sums) and a mean time-to-first-token estimated from
+  its pipeline stages (validation + queue wait + prefill), alongside the
+  existing batch-size and queue-depth gauges. (#10)
 - **AI-view trend sparklines** — each discovered inference server now shows
   nvtop-style braille sparklines of tokens/sec (scaled to its own peak) and
   KV-cache % (scaled to 100) next to the instantaneous numbers, fed by
