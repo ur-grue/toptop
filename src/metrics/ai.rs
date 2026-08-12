@@ -34,6 +34,10 @@ const RUNTIMES: &[(&str, &str, AiKind)] = &[
     ("llamafile", "llamafile", Serving),
     ("vllm", "vLLM", Serving),
     ("sglang", "SGLang", Serving),
+    ("trtllm-serve", "TensorRT-LLM", Serving),
+    ("tensorrt_llm", "TensorRT-LLM", Serving),
+    ("mlc_llm", "MLC LLM", Serving),
+    ("mlc-llm", "MLC LLM", Serving),
     ("text-generation-server", "TGI", Serving),
     ("tgi", "TGI", Serving),
     ("koboldcpp", "KoboldCpp", Serving),
@@ -41,6 +45,7 @@ const RUNTIMES: &[(&str, &str, AiKind)] = &[
     ("exllama", "ExLlama", Serving),
     ("lmstudio", "LM Studio", Serving),
     ("lm-studio", "LM Studio", Serving),
+    ("lm studio", "LM Studio", Serving),
     ("localai", "LocalAI", Serving),
     ("gpt4all", "GPT4All", Serving),
     ("mlx_lm", "MLX", Serving),
@@ -48,7 +53,6 @@ const RUNTIMES: &[(&str, &str, AiKind)] = &[
     ("tabbyapi", "TabbyAPI", Serving),
     ("comfyui", "ComfyUI", Serving),
     ("text-generation-webui", "TGW", Serving),
-    ("mlc_llm", "MLC LLM", Serving),
     // ── Training / fine-tuning ───────────────────────────────────────────────
     ("torchrun", "PyTorch", Training),
     ("deepspeed", "DeepSpeed", Training),
@@ -119,6 +123,30 @@ mod tests {
         assert_eq!(
             inference_runtime("python", "python -m sglang.launch_server"),
             Some("SGLang")
+        );
+    }
+
+    #[test]
+    fn detects_new_serving_runtimes() {
+        assert_eq!(
+            inference_runtime("trtllm-serve", "trtllm-serve model --port 8000"),
+            Some("TensorRT-LLM")
+        );
+        assert_eq!(
+            inference_runtime("python3", "python3 -m tensorrt_llm.commands.serve model"),
+            Some("TensorRT-LLM")
+        );
+        assert_eq!(
+            inference_runtime("python", "python -m mlc_llm serve HF://mlc-ai/Llama-3-8B"),
+            Some("MLC LLM")
+        );
+        // macOS-style process name with a space.
+        assert_eq!(
+            inference_runtime(
+                "LM Studio",
+                "/Applications/LM Studio.app/Contents/MacOS/LM Studio"
+            ),
+            Some("LM Studio")
         );
     }
 

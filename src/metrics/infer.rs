@@ -5,8 +5,9 @@
 //! servers and scrape the numbers you actually watch — **tokens/sec**, KV-cache
 //! pressure, queue depth, TTFT — straight from their metrics endpoints.
 //!
-//! Supported: llama.cpp / vLLM / TGI Prometheus `/metrics`, and Ollama's
-//! `/api/ps` JSON. The HTTP client is a tiny hand-rolled localhost GET (no
+//! Supported: llama.cpp / vLLM / TGI / TensorRT-LLM Prometheus `/metrics`,
+//! Ollama's `/api/ps` JSON, and LM Studio's `/api/v0/models` JSON. The HTTP
+//! client is a tiny hand-rolled localhost GET (no
 //! dependencies); scraping runs on a background thread so it never blocks the
 //! UI. The parsers are pure and unit-tested; discovery degrades to nothing when
 //! no server is listening.
@@ -212,6 +213,28 @@ pub fn parse_ollama_ps(json: &str) -> Vec<OllamaModel> {
     out
 }
 
+/// Parse LM Studio's `/api/v0/models` response: the id of the first model in
+/// `"state":"loaded"`, if any. Objects look like
+/// `{"id":"qwen2-vl-7b-instruct", …, "state":"loaded", …}`.
+pub fn parse_lmstudio_loaded_model(json: &str) -> Option<String> {
+    let mut idx = 0;
+    while let Some(rel) = json[idx..].find("\"id\":\"") {
+        let istart = idx + rel + "\"id\":\"".len();
+        let iend = json[istart..].find('"')?;
+        let id = &json[istart..istart + iend];
+        // Bound the state search to this object (before the next "id").
+        let next = json[istart..]
+            .find("\"id\":\"")
+            .map(|p| istart + p)
+            .unwrap_or(json.len());
+        if json[istart..next].contains("\"state\":\"loaded\"") {
+            return Some(id.to_string());
+        }
+        idx = istart + iend;
+    }
+    None
+}
+
 /// Build the gauge-derived part of `ServerStats` from a Prometheus body. Counter
 /// rates (vLLM tokens/sec) are layered on by the monitor, which holds history.
 pub fn stats_from_prometheus(text: &str, pid: u32, port: u16) -> Option<ServerStats> {
@@ -236,6 +259,20 @@ pub fn stats_from_prometheus(text: &str, pid: u32, port: u16) -> Option<ServerSt
         if let (Some(sum), Some(cnt)) = (
             prom_sum(text, "vllm:time_to_first_token_seconds_sum"),
             prom_sum(text, "vllm:time_to_first_token_seconds_count"),
+        ) {
+            if cnt > 0.0 {
+                s.ttft_ms = Some(sum / cnt * 1000.0);
+            }
+        }
+    } else if text.contains("trtllm_") {
+        s.runtime = "TensorRT-LLM";
+        s.kv_pct = prom_sum(text, "trtllm_kv_cache_utilization").map(|v| v * 100.0);
+        s.running = prom_sum(text, "trtllm_num_requests_running");
+        s.waiting = prom_sum(text, "trtllm_num_requests_waiting");
+        s.model = prom_label(text, "trtllm_", "model_name").unwrap_or_default();
+        if let (Some(sum), Some(cnt)) = (
+            prom_sum(text, "trtllm_time_to_first_token_seconds_sum"),
+            prom_sum(text, "trtllm_time_to_first_token_seconds_count"),
         ) {
             if cnt > 0.0 {
                 s.ttft_ms = Some(sum / cnt * 1000.0);
@@ -411,6 +448,14 @@ fn scrape_once(prev: &mut HashMap<(u32, u16, &'static str), (f64, Instant)>) -> 
                             s.prompt_tps = counter_rate(prev, (pid, port, "prompt"), p, now);
                         }
                     }
+                    "TensorRT-LLM" => {
+                        if let Some(g) = prom_sum(&body, "trtllm_generation_tokens_total") {
+                            s.gen_tps = counter_rate(prev, (pid, port, "gen"), g, now);
+                        }
+                        if let Some(p) = prom_sum(&body, "trtllm_prompt_tokens_total") {
+                            s.prompt_tps = counter_rate(prev, (pid, port, "prompt"), p, now);
+                        }
+                    }
                     // TGI has no tokens-total counters; its per-request
                     // histogram sums are cumulative and increment as requests
                     // finish, so their rate is throughput (slightly bursty).
@@ -442,7 +487,21 @@ fn scrape_once(prev: &mut HashMap<(u32, u16, &'static str), (f64, Instant)>) -> 
                         gpu_offload_pct: offload,
                         ..Default::default()
                     });
+                    continue;
                 }
+            }
+        }
+        // LM Studio JSON (no Prometheus endpoint; /api/v0/models lists
+        // models with a "state" field marking the loaded one).
+        if let Some(body) = http_get(port, "/api/v0/models", timeout) {
+            if body.contains("\"state\"") {
+                out.push(ServerStats {
+                    runtime: "LM Studio",
+                    pid,
+                    port,
+                    model: parse_lmstudio_loaded_model(&body).unwrap_or_default(),
+                    ..Default::default()
+                });
             }
         }
     }
@@ -592,6 +651,40 @@ mod tests {
             counter_rate(&mut prev, (1, 3000, "gen"), g0 + 500.0, t1),
             Some(250.0)
         );
+    }
+
+    #[test]
+    fn trtllm_stats() {
+        // Names as emitted by TensorRT-LLM's MetricsCollector
+        // (tensorrt_llm/metrics/collector.py).
+        let text = "trtllm_kv_cache_utilization{model_name=\"nemotron-nano-3\"} 0.42\n\
+                    trtllm_num_requests_running{model_name=\"nemotron-nano-3\"} 3\n\
+                    trtllm_num_requests_waiting{model_name=\"nemotron-nano-3\"} 1\n\
+                    trtllm_time_to_first_token_seconds_sum{model_name=\"nemotron-nano-3\"} 4.0\n\
+                    trtllm_time_to_first_token_seconds_count{model_name=\"nemotron-nano-3\"} 20\n\
+                    trtllm_generation_tokens_total{model_name=\"nemotron-nano-3\"} 12345\n";
+        let s = stats_from_prometheus(text, 13, 8000).unwrap();
+        assert_eq!(s.runtime, "TensorRT-LLM");
+        assert_eq!(s.kv_pct.map(|v| v.round()), Some(42.0));
+        assert_eq!(s.running, Some(3.0));
+        assert_eq!(s.waiting, Some(1.0));
+        assert_eq!(s.model, "nemotron-nano-3");
+        assert_eq!(s.ttft_ms, Some(200.0));
+    }
+
+    #[test]
+    fn lmstudio_models_parse() {
+        // Shape from LM Studio's REST docs (GET /api/v0/models).
+        let json = r#"{"object":"list","data":[
+            {"id":"qwen2-vl-7b-instruct","object":"model","type":"vlm","state":"not-loaded","max_context_length":32768},
+            {"id":"llama-3.2-3b-instruct","object":"model","type":"llm","state":"loaded","max_context_length":131072}]}"#;
+        assert_eq!(
+            parse_lmstudio_loaded_model(json).as_deref(),
+            Some("llama-3.2-3b-instruct")
+        );
+        let none_loaded =
+            r#"{"data":[{"id":"a","state":"not-loaded"},{"id":"b","state":"not-loaded"}]}"#;
+        assert_eq!(parse_lmstudio_loaded_model(none_loaded), None);
     }
 
     #[test]

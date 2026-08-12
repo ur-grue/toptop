@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
+  Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus
+  tokens/sec from its counters), the `mlc-llm` launcher spelling (base MLC
+  LLM detection landed in #54), and LM Studio (process detection plus the
+  loaded model via its `/api/v0/models` endpoint). (#5)
+- **TGI throughput and TTFT** — discovered Text Generation Inference servers
+  now show generated and prefill tokens/sec (derived from TGI's cumulative
+  per-request histogram sums) and a mean time-to-first-token estimated from
+  its pipeline stages (validation + queue wait + prefill), alongside the
+  existing batch-size and queue-depth gauges. (#10)
 - **TGI throughput and TTFT** — discovered Text Generation Inference servers
   now show generated and prefill tokens/sec (derived from TGI's cumulative
   per-request histogram sums) and a mean time-to-first-token estimated from

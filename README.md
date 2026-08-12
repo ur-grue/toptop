@@ -53,7 +53,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 > Local LLMs are **memory‑bandwidth bound** once the model is resident, so a GPU at "31% util" can
 > still be your bottleneck. toptop shows **compute vs. bandwidth** side by side, warns **before**
 > VRAM spills to system RAM (a 5–20× slowdown), reads the driver's throttle reasons, and
-> **auto‑discovers your inference servers** (vLLM · llama.cpp · Ollama · TGI) to scrape live
+> **auto‑discovers your inference servers** (vLLM · llama.cpp · Ollama · TGI · TensorRT‑LLM · LM Studio) to scrape live
 > **tokens/sec**, KV‑cache pressure and queue depth — then exports it as JSON **or Prometheus**
 > for Grafana, or fans out across a cluster with the [fleet view](#-multi-host-fleet-view).
 
@@ -108,7 +108,7 @@ sensors, battery, seven themes — all in a single **~1 MB binary with zero runt
 | | |
 |---|---|
 | 🤖 **AI / local‑LLM view** | compute **vs. memory‑bandwidth** util, VRAM spill warning, throttle flag, per‑process VRAM, tokens/sec/watt, serving‑vs‑training detection (press `a`) |
-| 🔭 **Server auto‑discovery** | finds listening vLLM / llama.cpp / Ollama / TGI and scrapes live **tokens/sec**, KV‑cache, queue depth, TTFT — no config |
+| 🔭 **Server auto‑discovery** | finds listening vLLM / llama.cpp / Ollama / TGI / TensorRT‑LLM / LM Studio and scrapes live **tokens/sec**, KV‑cache, queue depth, TTFT — no config |
 | 🎮 **Multi‑vendor GPU** | NVIDIA (`nvidia-smi`) **and** AMD/Intel (`sysfs`), polled off‑thread — util, bandwidth, VRAM, power, temp, throttle |
 | 📡 **Prometheus exporter** | `--serve-metrics` runs a `/metrics` endpoint (or `--export prometheus`) — scrape tokens/sec, VRAM, throttle into Grafana |
 | 🚨 **Threshold alerts** | VRAM‑spill, GPU‑throttle, KV‑cache and queue‑backlog alerts — a red TUI banner **and** `toptop_alert` gauges for Alertmanager |
