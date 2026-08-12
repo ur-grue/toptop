@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Invalid command-line **values** (e.g. `--tick abc`, an unknown `--theme`)
+  now exit with status 2 like other argument errors, as the man page always
+  documented; they previously exited 1. (#19)
+
 - **Signal delivery now reports a precise outcome** — *delivered*, *permission
   denied* (e.g. signalling another user's process without `sudo`), *already
   exited*, or *unsupported* — instead of a single generic "Failed to signal".

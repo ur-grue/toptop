@@ -56,124 +56,153 @@ KEYS (in-app, press ? for the full list):
     ↑/↓  select   s sort   t tree   / filter   K kill   p theme   space pause   q quit
 ";
 
-fn main() -> Result<()> {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+/// Immediate actions that print and exit instead of starting the monitor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    Run,
+    Help,
+    Version,
+    ListThemes,
+}
 
-    // `--config` must be known before the config file is loaded, so resolve
-    // it up front; the parse loop below skips over it.
-    let config_path: Option<PathBuf> = argv
-        .iter()
-        .position(|a| a == "--config")
-        .map(|i| {
-            argv.get(i + 1)
-                .filter(|p| !p.starts_with('-'))
-                .map(PathBuf::from)
-                .context("--config requires a file path")
-        })
-        .transpose()?;
+/// Everything the command line can express, applied on top of a loaded Config.
+#[derive(Debug)]
+struct Opts {
+    cfg: Config,
+    config_path: Option<PathBuf>,
+    no_save: bool,
+    snapshot: bool,
+    export: Option<&'static str>,
+    start_ai: bool,
+    remote_hosts: Vec<String>,
+    remote_cmd: String,
+    serve_addr: Option<String>,
+    action: Action,
+}
 
-    let mut cfg = match &config_path {
-        Some(path) => Config::load_path(path),
-        None => Config::load(),
+/// Pre-scan for `--config <path>`. It must be known before the config file is
+/// loaded, because every other flag overrides the loaded file.
+fn config_path_arg(args: &[String]) -> Result<Option<PathBuf>, String> {
+    match args.iter().position(|a| a == "--config") {
+        None => Ok(None),
+        Some(i) => args
+            .get(i + 1)
+            .filter(|p| !p.starts_with('-'))
+            .map(|p| Some(PathBuf::from(p)))
+            .ok_or_else(|| "--config requires a file path".to_string()),
+    }
+}
+
+/// Parse all flags onto `cfg` (already loaded from the right file).
+///
+/// Pure — no printing, no exiting. An `Err` is the message to show before
+/// exiting with status 2. Help/version/list-themes return immediately with the
+/// matching [`Action`], mirroring the historical first-flag-wins behavior.
+fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
+    let mut opts = Opts {
+        cfg,
+        config_path: None,
+        no_save: false,
+        snapshot: false,
+        export: None,
+        start_ai: false,
+        remote_hosts: Vec::new(),
+        remote_cmd: "toptop --export json".to_string(),
+        serve_addr: None,
+        action: Action::Run,
     };
-    let mut no_save = false;
-    let mut snapshot = false;
-    let mut export: Option<&'static str> = None;
-    let mut start_ai = false;
-    let mut remote_hosts: Vec<String> = Vec::new();
-    let mut remote_cmd = "toptop --export json".to_string();
-    let mut serve_addr: Option<String> = None;
 
     let mut args = argv.iter().peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
-                print!("{HELP}");
-                return Ok(());
+                opts.action = Action::Help;
+                return Ok(opts);
             }
             "-V" | "--version" => {
-                println!("toptop {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
+                opts.action = Action::Version;
+                return Ok(opts);
             }
             "--list-themes" => {
-                for t in theme::THEMES {
-                    println!("{}", t.name);
-                }
-                return Ok(());
+                opts.action = Action::ListThemes;
+                return Ok(opts);
             }
             "-t" | "--tick" => {
                 let v = args
                     .next()
-                    .context("--tick requires a millisecond value")?
+                    .ok_or("--tick requires a millisecond value")?
                     .parse::<u64>()
-                    .context("--tick value must be an integer")?;
-                cfg.tick_ms = v.clamp(100, 60_000);
+                    .map_err(|_| "--tick value must be an integer")?;
+                opts.cfg.tick_ms = v.clamp(100, 60_000);
             }
             "--theme" => {
-                let name = args.next().context("--theme requires a name")?;
-                cfg.theme_idx = theme::index_by_name(name)
-                    .with_context(|| format!("unknown theme '{name}' (try --list-themes)"))?;
+                let name = args.next().ok_or("--theme requires a name")?;
+                opts.cfg.theme_idx = theme::index_by_name(name)
+                    .ok_or_else(|| format!("unknown theme '{name}' (try --list-themes)"))?;
             }
-            "--tree" => cfg.tree = true,
-            "--no-tree" => cfg.tree = false,
-            "--ai" => start_ai = true,
+            "--tree" => opts.cfg.tree = true,
+            "--no-tree" => opts.cfg.tree = false,
+            "--ai" => opts.start_ai = true,
             "--remote" => {
                 let list = args
                     .next()
-                    .context("--remote requires a comma-separated host list")?;
-                remote_hosts = list
+                    .ok_or("--remote requires a comma-separated host list")?;
+                opts.remote_hosts = list
                     .split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
             }
             "--remote-cmd" => {
-                remote_cmd = args
+                opts.remote_cmd = args
                     .next()
-                    .context("--remote-cmd requires a command")?
+                    .ok_or("--remote-cmd requires a command")?
                     .clone();
             }
             "--config" => {
-                // Already resolved in the pre-scan above; skip the value.
-                args.next();
+                let p = args
+                    .next()
+                    .filter(|p| !p.starts_with('-'))
+                    .ok_or("--config requires a file path")?;
+                opts.config_path = Some(PathBuf::from(p));
             }
-            "--no-save" => no_save = true,
+            "--no-save" => opts.no_save = true,
             "--serve-metrics" => {
                 // Optional address argument; defaults to localhost:9709.
                 let addr = match args.peek() {
                     Some(a) if !a.starts_with('-') => args.next().unwrap().clone(),
                     _ => "127.0.0.1:9709".to_string(),
                 };
-                serve_addr = Some(addr);
+                opts.serve_addr = Some(addr);
             }
             "--alert-vram" => {
                 let v = args
                     .next()
-                    .context("--alert-vram requires a percentage")?
+                    .ok_or("--alert-vram requires a percentage")?
                     .parse::<f32>()
-                    .context("--alert-vram value must be a number")?;
-                cfg.alerts.vram_spill_pct = v.clamp(1.0, 100.0);
+                    .map_err(|_| "--alert-vram value must be a number")?;
+                opts.cfg.alerts.vram_spill_pct = v.clamp(1.0, 100.0);
             }
             "--alert-kv" => {
                 let v = args
                     .next()
-                    .context("--alert-kv requires a percentage")?
+                    .ok_or("--alert-kv requires a percentage")?
                     .parse::<f64>()
-                    .context("--alert-kv value must be a number")?;
-                cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
+                    .map_err(|_| "--alert-kv value must be a number")?;
+                opts.cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
             }
             "--alert-queue" => {
                 let v = args
                     .next()
-                    .context("--alert-queue requires a count")?
+                    .ok_or("--alert-queue requires a count")?
                     .parse::<f64>()
-                    .context("--alert-queue value must be a number")?;
-                cfg.alerts.queue_high = v.max(1.0);
+                    .map_err(|_| "--alert-queue value must be a number")?;
+                opts.cfg.alerts.queue_high = v.max(1.0);
             }
-            "--snapshot" => snapshot = true,
+            "--snapshot" => opts.snapshot = true,
             "--export" => {
                 // Optional format argument: `json` (default) or `prometheus`.
-                export = Some(match args.peek().map(|s| s.as_str()) {
+                opts.export = Some(match args.peek().map(|s| s.as_str()) {
                     Some("prometheus") | Some("prom") => {
                         args.next();
                         "prometheus"
@@ -189,12 +218,58 @@ fn main() -> Result<()> {
                     _ => "json",
                 });
             }
-            other => {
-                eprintln!("toptop: unknown argument '{other}' (try --help)");
-                std::process::exit(2);
-            }
+            other => return Err(format!("unknown argument '{other}' (try --help)")),
         }
     }
+    Ok(opts)
+}
+
+/// Print an argument error and exit with the documented status 2.
+fn arg_error(msg: &str) -> ! {
+    eprintln!("toptop: {msg}");
+    std::process::exit(2);
+}
+
+fn main() -> Result<()> {
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+
+    let config_path = config_path_arg(&argv).unwrap_or_else(|e| arg_error(&e));
+    let cfg = match &config_path {
+        Some(path) => Config::load_path(path),
+        None => Config::load(),
+    };
+    let opts = parse_args(&argv, cfg).unwrap_or_else(|e| arg_error(&e));
+
+    match opts.action {
+        Action::Help => {
+            print!("{HELP}");
+            return Ok(());
+        }
+        Action::Version => {
+            println!("toptop {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Action::ListThemes => {
+            for t in theme::THEMES {
+                println!("{}", t.name);
+            }
+            return Ok(());
+        }
+        Action::Run => {}
+    }
+
+    let Opts {
+        cfg,
+        config_path,
+        no_save,
+        snapshot,
+        export,
+        start_ai,
+        remote_hosts,
+        remote_cmd,
+        serve_addr,
+        ..
+    } = opts;
 
     if let Some(format) = export {
         return run_export(&cfg, format);
@@ -424,4 +499,180 @@ fn restore_terminal(terminal: &mut Tui) -> Result<()> {
     )?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Opts, String> {
+        let argv: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        parse_args(&argv, Config::default())
+    }
+
+    #[test]
+    fn no_args_yields_defaults() {
+        let o = parse(&[]).unwrap();
+        assert_eq!(o.action, Action::Run);
+        assert!(!o.snapshot && !o.start_ai && !o.no_save);
+        assert_eq!(o.export, None);
+        assert_eq!(o.serve_addr, None);
+        assert_eq!(o.config_path, None);
+        assert!(o.remote_hosts.is_empty());
+        assert_eq!(o.remote_cmd, "toptop --export json");
+        assert_eq!(o.cfg.tick_ms, Config::default().tick_ms);
+    }
+
+    #[test]
+    fn tick_parses_and_clamps() {
+        assert_eq!(parse(&["--tick", "500"]).unwrap().cfg.tick_ms, 500);
+        assert_eq!(parse(&["-t", "50"]).unwrap().cfg.tick_ms, 100);
+        assert_eq!(parse(&["--tick", "999999"]).unwrap().cfg.tick_ms, 60_000);
+    }
+
+    #[test]
+    fn tick_errors() {
+        assert!(parse(&["--tick"]).unwrap_err().contains("requires"));
+        assert!(parse(&["--tick", "abc"]).unwrap_err().contains("integer"));
+    }
+
+    #[test]
+    fn theme_by_name_and_unknown() {
+        let o = parse(&["--theme", "nord"]).unwrap();
+        assert_eq!(Some(o.cfg.theme_idx), theme::index_by_name("nord"));
+        let e = parse(&["--theme", "plaid"]).unwrap_err();
+        assert!(e.contains("unknown theme 'plaid'"));
+        assert!(parse(&["--theme"]).unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn tree_flags_last_one_wins() {
+        assert!(parse(&["--tree"]).unwrap().cfg.tree);
+        assert!(!parse(&["--tree", "--no-tree"]).unwrap().cfg.tree);
+        assert!(parse(&["--ai"]).unwrap().start_ai);
+    }
+
+    #[test]
+    fn remote_hosts_split_and_trimmed() {
+        let o = parse(&["--remote", "a, b,,c", "--remote-cmd", "tt --export json"]).unwrap();
+        assert_eq!(o.remote_hosts, vec!["a", "b", "c"]);
+        assert_eq!(o.remote_cmd, "tt --export json");
+        assert!(parse(&["--remote"]).unwrap_err().contains("requires"));
+        assert!(parse(&["--remote-cmd"]).unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn serve_metrics_address_is_optional() {
+        assert_eq!(
+            parse(&["--serve-metrics"]).unwrap().serve_addr.as_deref(),
+            Some("127.0.0.1:9709")
+        );
+        assert_eq!(
+            parse(&["--serve-metrics", "0.0.0.0:9709"])
+                .unwrap()
+                .serve_addr
+                .as_deref(),
+            Some("0.0.0.0:9709")
+        );
+        // A following flag is not swallowed as the address.
+        let o = parse(&["--serve-metrics", "--tree"]).unwrap();
+        assert_eq!(o.serve_addr.as_deref(), Some("127.0.0.1:9709"));
+        assert!(o.cfg.tree);
+    }
+
+    #[test]
+    fn export_formats() {
+        assert_eq!(parse(&["--export"]).unwrap().export, Some("json"));
+        assert_eq!(parse(&["--export", "csv"]).unwrap().export, Some("csv"));
+        assert_eq!(
+            parse(&["--export", "prom"]).unwrap().export,
+            Some("prometheus")
+        );
+        assert_eq!(
+            parse(&["--export", "prometheus"]).unwrap().export,
+            Some("prometheus")
+        );
+        // A following flag means default format, and the flag still applies.
+        let o = parse(&["--export", "--tree"]).unwrap();
+        assert_eq!(o.export, Some("json"));
+        assert!(o.cfg.tree);
+    }
+
+    #[test]
+    fn alert_flags_clamp_and_error() {
+        let o = parse(&[
+            "--alert-vram",
+            "85",
+            "--alert-kv",
+            "90.5",
+            "--alert-queue",
+            "4",
+        ])
+        .unwrap();
+        assert_eq!(o.cfg.alerts.vram_spill_pct, 85.0);
+        assert_eq!(o.cfg.alerts.kv_high_pct, 90.5);
+        assert_eq!(o.cfg.alerts.queue_high, 4.0);
+        assert_eq!(
+            parse(&["--alert-vram", "250"])
+                .unwrap()
+                .cfg
+                .alerts
+                .vram_spill_pct,
+            100.0
+        );
+        assert_eq!(
+            parse(&["--alert-queue", "0"])
+                .unwrap()
+                .cfg
+                .alerts
+                .queue_high,
+            1.0
+        );
+        assert!(parse(&["--alert-kv", "lots"])
+            .unwrap_err()
+            .contains("number"));
+        assert!(parse(&["--alert-vram"]).unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn config_flag_and_prescan_agree() {
+        let argv: Vec<String> = ["--config", "/tmp/x.conf", "--no-save"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            config_path_arg(&argv).unwrap(),
+            Some(PathBuf::from("/tmp/x.conf"))
+        );
+        let o = parse_args(&argv, Config::default()).unwrap();
+        assert_eq!(o.config_path, Some(PathBuf::from("/tmp/x.conf")));
+        assert!(o.no_save);
+
+        for bad in [&["--config"][..], &["--config", "--tree"][..]] {
+            let argv: Vec<String> = bad.iter().map(|s| s.to_string()).collect();
+            assert!(config_path_arg(&argv).is_err());
+            assert!(parse_args(&argv, Config::default()).is_err());
+        }
+        assert_eq!(config_path_arg(&[]).unwrap(), None);
+    }
+
+    #[test]
+    fn action_flags_exit_early_ignoring_later_args() {
+        // Historical behavior: --help wins immediately, even before bad flags.
+        assert_eq!(parse(&["--help", "--bogus"]).unwrap().action, Action::Help);
+        assert_eq!(parse(&["-h"]).unwrap().action, Action::Help);
+        assert_eq!(parse(&["-V"]).unwrap().action, Action::Version);
+        assert_eq!(parse(&["--version"]).unwrap().action, Action::Version);
+        assert_eq!(
+            parse(&["--list-themes"]).unwrap().action,
+            Action::ListThemes
+        );
+    }
+
+    #[test]
+    fn unknown_flag_is_an_error() {
+        let e = parse(&["--bogus"]).unwrap_err();
+        assert!(e.contains("unknown argument '--bogus'"));
+        assert!(e.contains("--help"));
+    }
 }
