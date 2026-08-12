@@ -25,6 +25,7 @@ const INDEX: &str = "<!doctype html><title>toptop</title>\
 pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
     let shared = Arc::new(Mutex::new(String::from("# toptop: warming up\n")));
     let interval = Duration::from_millis(cfg.tick_ms.max(1000));
+    let alert_cfg = cfg.alerts.clone();
 
     // Background sampler: owns the Collector, republishes rendered metrics.
     {
@@ -35,7 +36,7 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
                 let mut c = Collector::new(256);
                 loop {
                     c.refresh();
-                    let text = export::to_prometheus(&c);
+                    let text = export::to_prometheus(&c, &alert_cfg);
                     if let Ok(mut s) = shared.lock() {
                         *s = text;
                     }

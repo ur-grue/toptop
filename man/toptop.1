@@ -41,6 +41,15 @@ Run a long-running Prometheus metrics endpoint (default \fI127.0.0.1:9709\fR),
 serving \fB/metrics\fR for continuous scraping. Includes \fBtoptop_alert\fR
 gauges for VRAM-spill, GPU-throttle, KV-cache and queue-backlog conditions.
 .TP
+.BR \-\-alert\-vram " " \fIPCT\fR
+VRAM usage percentage that triggers the spill-risk alert (default 90).
+.TP
+.BR \-\-alert\-kv " " \fIPCT\fR
+KV-cache usage percentage considered saturated (default 95).
+.TP
+.BR \-\-alert\-queue " " \fIN\fR
+Number of queued requests considered a backlog (default 8).
+.TP
 .B \-\-list\-themes
 Print available themes and exit.
 .TP
@@ -110,7 +119,9 @@ Quit.
 .SH FILES
 .TP
 .I ~/.config/toptop/config.conf
-Persisted settings (theme, refresh interval, tree mode, layout). Honors
+Persisted settings (theme, refresh interval, tree mode, layout, alert
+thresholds: \fBalert_vram_pct\fR, \fBalert_kv_pct\fR, \fBalert_queue\fR).
+Honors
 .BR XDG_CONFIG_HOME .
 .SH EXIT STATUS
 Returns 0 on success and 2 on an invalid command-line argument.
