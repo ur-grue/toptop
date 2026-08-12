@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **AI-view trend sparklines** — each discovered inference server now shows
+  nvtop-style braille sparklines of tokens/sec (scaled to its own peak) and
+  KV-cache % (scaled to 100) next to the instantaneous numbers, fed by
+  per-server 256-sample histories that are pruned when a server goes
+  away. (#30)
 - `--export csv` — the top processes as CSV (header row, RFC 4180 quoting) for
   spreadsheets and `awk`, alongside the existing `json` and `prometheus`
   exporters. (#16)
