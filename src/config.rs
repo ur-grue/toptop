@@ -2,11 +2,15 @@
 //!
 //! Settings are read from `$XDG_CONFIG_HOME/toptop/config.conf` (falling back to
 //! `~/.config/...`) as simple `key = value` lines, and overridable from the CLI.
-//! Persisting failures are non-fatal — the monitor always runs with defaults.
+//! `--config <path>` substitutes an explicit file for the default location.
+//! Persisting failures are non-fatal — the monitor always runs with defaults,
+//! and a failed save is reported as a one-line warning on exit.
 
 use std::fs;
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 
+use crate::alerts::AlertConfig;
 use crate::app::LayoutPreset;
 use crate::theme;
 
@@ -23,6 +27,8 @@ pub struct Config {
     pub per_core: bool,
     /// Body layout preset.
     pub layout: LayoutPreset,
+    /// Alert thresholds (VRAM spill, KV-cache saturation, queue backlog).
+    pub alerts: AlertConfig,
 }
 
 impl Default for Config {
@@ -33,6 +39,7 @@ impl Default for Config {
             tree: false,
             per_core: true,
             layout: LayoutPreset::Full,
+            alerts: AlertConfig::default(),
         }
     }
 }
@@ -46,15 +53,27 @@ impl Config {
         Some(base.join("toptop").join("config.conf"))
     }
 
-    /// Load config from disk, ignoring any errors and falling back to defaults.
+    /// Load config from the default location, falling back to defaults.
     pub fn load() -> Self {
+        match Self::path() {
+            Some(path) => Self::load_path(&path),
+            None => Config::default(),
+        }
+    }
+
+    /// Load config from an explicit file (`--config`), ignoring any errors
+    /// and falling back to defaults.
+    pub fn load_path(path: &Path) -> Self {
+        let Ok(contents) = fs::read_to_string(path) else {
+            return Config::default();
+        };
+        Self::parse(&contents)
+    }
+
+    /// Parse `key = value` lines, falling back to defaults for anything
+    /// missing or malformed.
+    fn parse(contents: &str) -> Self {
         let mut cfg = Config::default();
-        let Some(path) = Self::path() else {
-            return cfg;
-        };
-        let Ok(contents) = fs::read_to_string(&path) else {
-            return cfg;
-        };
         for line in contents.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
@@ -79,19 +98,42 @@ impl Config {
                 "tree" => cfg.tree = parse_bool(value).unwrap_or(cfg.tree),
                 "per_core" => cfg.per_core = parse_bool(value).unwrap_or(cfg.per_core),
                 "layout" => cfg.layout = LayoutPreset::from_name(value).unwrap_or(cfg.layout),
+                "alert_vram_pct" => {
+                    if let Ok(v) = value.parse::<f32>() {
+                        cfg.alerts.vram_spill_pct = v.clamp(1.0, 100.0);
+                    }
+                }
+                "alert_kv_pct" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
+                    }
+                }
+                "alert_queue" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        cfg.alerts.queue_high = v.max(1.0);
+                    }
+                }
                 _ => {}
             }
         }
         cfg
     }
 
-    /// Persist the current config. Errors are intentionally swallowed.
-    pub fn save(&self) {
-        let Some(path) = Self::path() else {
-            return;
-        };
+    /// Persist the current config to the default location.
+    pub fn save(&self) -> io::Result<()> {
+        let path = Self::path().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "cannot resolve config path (HOME and XDG_CONFIG_HOME unset)",
+            )
+        })?;
+        self.save_path(&path)
+    }
+
+    /// Persist the current config to an explicit file (`--config`).
+    pub fn save_path(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+            fs::create_dir_all(parent)?;
         }
         let theme_name = theme::THEMES
             .get(self.theme_idx)
@@ -103,14 +145,20 @@ impl Config {
              theme = {}\n\
              tree = {}\n\
              per_core = {}\n\
-             layout = {}\n",
+             layout = {}\n\
+             alert_vram_pct = {}\n\
+             alert_kv_pct = {}\n\
+             alert_queue = {}\n",
             self.tick_ms,
             theme_name,
             self.tree,
             self.per_core,
-            self.layout.label()
+            self.layout.label(),
+            self.alerts.vram_spill_pct,
+            self.alerts.kv_high_pct,
+            self.alerts.queue_high
         );
-        let _ = fs::write(path, body);
+        fs::write(path, body)
     }
 }
 
@@ -134,9 +182,71 @@ mod tests {
     }
 
     #[test]
+    fn parses_alert_thresholds() {
+        let cfg = Config::parse(
+            "alert_vram_pct = 85\n\
+             alert_kv_pct = 90.5\n\
+             alert_queue = 4\n",
+        );
+        assert_eq!(cfg.alerts.vram_spill_pct, 85.0);
+        assert_eq!(cfg.alerts.kv_high_pct, 90.5);
+        assert_eq!(cfg.alerts.queue_high, 4.0);
+    }
+
+    #[test]
+    fn clamps_and_ignores_bad_alert_values() {
+        let cfg = Config::parse(
+            "alert_vram_pct = 250\n\
+             alert_kv_pct = -5\n\
+             alert_queue = lots\n",
+        );
+        assert_eq!(cfg.alerts.vram_spill_pct, 100.0);
+        assert_eq!(cfg.alerts.kv_high_pct, 1.0);
+        assert_eq!(cfg.alerts.queue_high, AlertConfig::default().queue_high);
+    }
+
+    #[test]
     fn bool_parsing() {
         assert_eq!(parse_bool("yes"), Some(true));
         assert_eq!(parse_bool("OFF"), Some(false));
         assert_eq!(parse_bool("maybe"), None);
+    }
+
+    /// A scratch path unique to this test process.
+    fn scratch(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("toptop-cfg-test-{}-{name}", std::process::id()))
+    }
+
+    #[test]
+    fn save_and_load_explicit_path_round_trips() {
+        let path = scratch("roundtrip").join("config.conf");
+        let cfg = Config {
+            tick_ms: 2500,
+            tree: true,
+            per_core: false,
+            ..Config::default()
+        };
+        cfg.save_path(&path).expect("save should succeed");
+        let loaded = Config::load_path(&path);
+        assert_eq!(loaded.tick_ms, 2500);
+        assert!(loaded.tree);
+        assert!(!loaded.per_core);
+        fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn load_missing_explicit_path_falls_back_to_defaults() {
+        let cfg = Config::load_path(Path::new("/nonexistent/toptop/config.conf"));
+        assert_eq!(cfg.tick_ms, Config::default().tick_ms);
+    }
+
+    #[test]
+    fn save_to_unwritable_path_reports_the_error() {
+        // The parent "directory" is a regular file, so the save must fail.
+        let blocker = scratch("blocker");
+        fs::write(&blocker, "not a directory").unwrap();
+        let cfg = Config::default();
+        assert!(cfg.save_path(&blocker.join("config.conf")).is_err());
+        fs::remove_file(&blocker).ok();
     }
 }
