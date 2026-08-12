@@ -117,6 +117,36 @@ pub fn prom_sum(text: &str, name: &str) -> Option<f64> {
     found.then_some(total)
 }
 
+/// Like [`prom_sum`], but only over series whose label block contains
+/// `label_frag` (e.g. `method="prefill"`). Returns `None` if none matched.
+pub fn prom_sum_with_label(text: &str, name: &str, label_frag: &str) -> Option<f64> {
+    let mut found = false;
+    let mut total = 0.0;
+    for line in text.lines() {
+        let line = line.trim();
+        if !line.starts_with(name) {
+            continue;
+        }
+        let rest = &line[name.len()..];
+        if !rest.starts_with('{') {
+            continue;
+        }
+        let Some(close) = rest.find('}') else {
+            continue;
+        };
+        if !rest[..close].contains(label_frag) {
+            continue;
+        }
+        if let Some(tok) = rest[close + 1..].split_whitespace().next() {
+            if let Ok(v) = tok.parse::<f64>() {
+                total += v;
+                found = true;
+            }
+        }
+    }
+    found.then_some(total)
+}
+
 /// Extract the first value of `label` from any series of `metric`.
 pub fn prom_label(text: &str, metric: &str, label: &str) -> Option<String> {
     let needle = format!("{label}=\"");
@@ -215,6 +245,31 @@ pub fn stats_from_prometheus(text: &str, pid: u32, port: u16) -> Option<ServerSt
         s.runtime = "TGI";
         s.running = prom_sum(text, "tgi_batch_current_size");
         s.waiting = prom_sum(text, "tgi_queue_size");
+        // TGI exposes no direct TTFT histogram, but TTFT decomposes exactly
+        // into its per-request pipeline stages: validation, queue wait, then
+        // the prefill forward that emits the first token.
+        let mean = |metric: &str| {
+            let sum = prom_sum(text, &format!("{metric}_sum"))?;
+            let cnt = prom_sum(text, &format!("{metric}_count"))?;
+            (cnt > 0.0).then(|| sum / cnt)
+        };
+        let prefill_mean = (|| {
+            let sum = prom_sum_with_label(
+                text,
+                "tgi_batch_inference_duration_sum",
+                "method=\"prefill\"",
+            )?;
+            let cnt = prom_sum_with_label(
+                text,
+                "tgi_batch_inference_duration_count",
+                "method=\"prefill\"",
+            )?;
+            (cnt > 0.0).then(|| sum / cnt)
+        })();
+        if let (Some(queue), Some(prefill)) = (mean("tgi_request_queue_duration"), prefill_mean) {
+            let validation = mean("tgi_request_validation_duration").unwrap_or(0.0);
+            s.ttft_ms = Some((validation + queue + prefill) * 1000.0);
+        }
     } else {
         return None;
     }
@@ -347,13 +402,27 @@ fn scrape_once(prev: &mut HashMap<(u32, u16, &'static str), (f64, Instant)>) -> 
         // Prometheus endpoints (llama.cpp / vLLM / TGI).
         if let Some(body) = http_get(port, "/metrics", timeout) {
             if let Some(mut s) = stats_from_prometheus(&body, pid, port) {
-                if s.runtime == "vLLM" {
-                    if let Some(g) = prom_sum(&body, "vllm:generation_tokens_total") {
-                        s.gen_tps = counter_rate(prev, (pid, port, "gen"), g, now);
+                match s.runtime {
+                    "vLLM" => {
+                        if let Some(g) = prom_sum(&body, "vllm:generation_tokens_total") {
+                            s.gen_tps = counter_rate(prev, (pid, port, "gen"), g, now);
+                        }
+                        if let Some(p) = prom_sum(&body, "vllm:prompt_tokens_total") {
+                            s.prompt_tps = counter_rate(prev, (pid, port, "prompt"), p, now);
+                        }
                     }
-                    if let Some(p) = prom_sum(&body, "vllm:prompt_tokens_total") {
-                        s.prompt_tps = counter_rate(prev, (pid, port, "prompt"), p, now);
+                    // TGI has no tokens-total counters; its per-request
+                    // histogram sums are cumulative and increment as requests
+                    // finish, so their rate is throughput (slightly bursty).
+                    "TGI" => {
+                        if let Some(g) = prom_sum(&body, "tgi_request_generated_tokens_sum") {
+                            s.gen_tps = counter_rate(prev, (pid, port, "gen"), g, now);
+                        }
+                        if let Some(p) = prom_sum(&body, "tgi_request_input_length_sum") {
+                            s.prompt_tps = counter_rate(prev, (pid, port, "prompt"), p, now);
+                        }
                     }
+                    _ => {}
                 }
                 out.push(s);
                 continue;
@@ -444,6 +513,85 @@ mod tests {
         assert_eq!(s.runtime, "vLLM");
         assert_eq!(s.running, Some(3.0));
         assert_eq!(s.kv_pct.map(|v| v.round()), Some(80.0));
+    }
+
+    /// Metric names and shapes as emitted by TGI's router (see
+    /// text-generation-inference `router/src/server.rs`).
+    const TGI_PAYLOAD: &str = "\
+        # TYPE tgi_queue_size gauge\n\
+        tgi_queue_size 2\n\
+        # TYPE tgi_batch_current_size gauge\n\
+        tgi_batch_current_size 1\n\
+        # TYPE tgi_request_validation_duration histogram\n\
+        tgi_request_validation_duration_sum 0.05\n\
+        tgi_request_validation_duration_count 10\n\
+        # TYPE tgi_request_queue_duration histogram\n\
+        tgi_request_queue_duration_sum 1.2\n\
+        tgi_request_queue_duration_count 10\n\
+        # TYPE tgi_batch_inference_duration histogram\n\
+        tgi_batch_inference_duration_sum{method=\"prefill\"} 0.9\n\
+        tgi_batch_inference_duration_count{method=\"prefill\"} 10\n\
+        tgi_batch_inference_duration_sum{method=\"decode\"} 30.0\n\
+        tgi_batch_inference_duration_count{method=\"decode\"} 500\n\
+        # TYPE tgi_request_generated_tokens histogram\n\
+        tgi_request_generated_tokens_sum 1000\n\
+        tgi_request_generated_tokens_count 10\n\
+        # TYPE tgi_request_input_length histogram\n\
+        tgi_request_input_length_sum 5000\n\
+        tgi_request_input_length_count 10\n";
+
+    #[test]
+    fn tgi_stats_with_ttft() {
+        let s = stats_from_prometheus(TGI_PAYLOAD, 12, 3000).unwrap();
+        assert_eq!(s.runtime, "TGI");
+        assert_eq!(s.running, Some(1.0));
+        assert_eq!(s.waiting, Some(2.0));
+        // TTFT = mean validation + mean queue + mean prefill
+        //      = (0.05/10 + 1.2/10 + 0.9/10) s = 215 ms. Decode must not leak in.
+        assert_eq!(s.ttft_ms.map(|v| v.round()), Some(215.0));
+    }
+
+    #[test]
+    fn tgi_ttft_absent_without_prefill_series() {
+        // Queue histogram alone isn't enough to claim a TTFT.
+        let text = "tgi_queue_size 0\n\
+                    tgi_request_queue_duration_sum 1.0\n\
+                    tgi_request_queue_duration_count 10\n";
+        let s = stats_from_prometheus(text, 12, 3000).unwrap();
+        assert_eq!(s.runtime, "TGI");
+        assert_eq!(s.ttft_ms, None);
+    }
+
+    #[test]
+    fn prom_sum_with_label_filters_series() {
+        assert_eq!(
+            prom_sum_with_label(
+                TGI_PAYLOAD,
+                "tgi_batch_inference_duration_sum",
+                "method=\"prefill\""
+            ),
+            Some(0.9)
+        );
+        // Unlabeled series never match a label filter.
+        assert_eq!(
+            prom_sum_with_label(TGI_PAYLOAD, "tgi_queue_size", "method=\"prefill\""),
+            None
+        );
+    }
+
+    #[test]
+    fn tgi_token_counters_feed_the_rate_calc() {
+        // The cumulative histogram sums act as counters for tokens/sec.
+        let mut prev = HashMap::new();
+        let t0 = Instant::now();
+        let g0 = prom_sum(TGI_PAYLOAD, "tgi_request_generated_tokens_sum").unwrap();
+        assert_eq!(counter_rate(&mut prev, (1, 3000, "gen"), g0, t0), None);
+        // 500 more tokens completed over 2s → 250 tok/s.
+        let t1 = t0 + Duration::from_secs(2);
+        assert_eq!(
+            counter_rate(&mut prev, (1, 3000, "gen"), g0 + 500.0, t1),
+            Some(250.0)
+        );
     }
 
     #[test]

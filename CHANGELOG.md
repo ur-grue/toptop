@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **TGI throughput and TTFT** — discovered Text Generation Inference servers
+  now show generated and prefill tokens/sec (derived from TGI's cumulative
+  per-request histogram sums) and a mean time-to-first-token estimated from
+  its pipeline stages (validation + queue wait + prefill), alongside the
+  existing batch-size and queue-depth gauges. (#10)
 - `--export csv` — the top processes as CSV (header row, RFC 4180 quoting) for
   spreadsheets and `awk`, alongside the existing `json` and `prometheus`
   exporters. (#16)
