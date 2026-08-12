@@ -11,14 +11,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
   Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus
-  tokens/sec from its counters), MLC LLM (process detection), and LM Studio
-  (process detection plus the loaded model via its `/api/v0/models`
-  endpoint). (#5)
+  tokens/sec from its counters), the `mlc-llm` launcher spelling (base MLC
+  LLM detection landed in #54), and LM Studio (process detection plus the
+  loaded model via its `/api/v0/models` endpoint). (#5)
 - **TGI throughput and TTFT** — discovered Text Generation Inference servers
   now show generated and prefill tokens/sec (derived from TGI's cumulative
   per-request histogram sums) and a mean time-to-first-token estimated from
   its pipeline stages (validation + queue wait + prefill), alongside the
   existing batch-size and queue-depth gauges. (#10)
+- **TGI throughput and TTFT** — discovered Text Generation Inference servers
+  now show generated and prefill tokens/sec (derived from TGI's cumulative
+  per-request histogram sums) and a mean time-to-first-token estimated from
+  its pipeline stages (validation + queue wait + prefill), alongside the
+  existing batch-size and queue-depth gauges. (#10)
+- **AI-view trend sparklines** — each discovered inference server now shows
+  nvtop-style braille sparklines of tokens/sec (scaled to its own peak) and
+  KV-cache % (scaled to 100) next to the instantaneous numbers, fed by
+  per-server 256-sample histories that are pruned when a server goes
+  away. (#30)
+- `--config <path>` — use an explicit config file instead of
+  `$XDG_CONFIG_HOME/toptop/config.conf`, and `--no-save` — don't write the
+  config back on exit. A failed config save is now reported as a one-line
+  stderr warning after the TUI shuts down instead of being silently
+  swallowed. (#15)
+- **Configurable alert thresholds** — the VRAM-spill, KV-cache-saturation and
+  queue-backlog alert levels can now be tuned via `config.conf`
+  (`alert_vram_pct`, `alert_kv_pct`, `alert_queue`) or CLI flags
+  (`--alert-vram`, `--alert-kv`, `--alert-queue`). The thresholds apply to the
+  TUI banner, `--export prometheus`, and the `--serve-metrics` endpoint. (#6)
 - `--export csv` — the top processes as CSV (header row, RFC 4180 quoting) for
   spreadsheets and `awk`, alongside the existing `json` and `prometheus`
   exporters. (#16)

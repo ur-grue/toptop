@@ -1297,6 +1297,27 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
             if stat.len() > 1 {
                 lines.push(Line::from(stat));
             }
+
+            // Trend sparklines (nvtop-style): tokens/sec against its own peak,
+            // KV% against 100. One braille row each, side by side.
+            let spark_w = ((inner.width as usize).saturating_sub(16) / 2).min(20);
+            if let Some(h) = c.server_history.get(&(sv.pid, sv.port)) {
+                if h.tps.len() >= 2 && spark_w >= 6 && lines.len() + 1 < cap {
+                    let spark = |series: &[f64], max: f64| -> Vec<Span<'static>> {
+                        graph::braille_graph(series, max, spark_w, 1, theme)
+                            .pop()
+                            .map(|l| l.spans)
+                            .unwrap_or_default()
+                    };
+                    let mut sp = vec![Span::styled("    tok/s ", dim(theme))];
+                    sp.extend(spark(&h.tps.tail(spark_w * 2), h.tps.max()));
+                    if sv.kv_pct.is_some() {
+                        sp.push(Span::styled("  kv ", dim(theme)));
+                        sp.extend(spark(&h.kv.tail(spark_w * 2), 100.0));
+                    }
+                    lines.push(Line::from(sp));
+                }
+            }
         }
         lines.push(Line::from(Span::raw("")));
     } else {

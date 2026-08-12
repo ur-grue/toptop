@@ -163,6 +163,31 @@ mod tests {
     }
 
     #[test]
+    fn custom_thresholds_shift_the_trigger_point() {
+        let mut c = Collector::new(16);
+        c.gpus = vec![gpu(60, 100, false)];
+        c.servers = vec![ServerStats {
+            runtime: "vLLM",
+            port: 8000,
+            kv_pct: Some(80.0),
+            waiting: Some(3.0),
+            ..Default::default()
+        }];
+        // Default thresholds: nothing fires at these levels.
+        assert!(evaluate(&c, &AlertConfig::default()).is_empty());
+        // Tightened thresholds: all three rules fire.
+        let tight = AlertConfig {
+            vram_spill_pct: 50.0,
+            kv_high_pct: 75.0,
+            queue_high: 2.0,
+        };
+        let keys: Vec<_> = evaluate(&c, &tight).iter().map(|x| x.key).collect();
+        assert!(keys.contains(&"vram_spill"));
+        assert!(keys.contains(&"kv_high"));
+        assert!(keys.contains(&"queue_backlog"));
+    }
+
+    #[test]
     fn fires_kv_and_queue() {
         let mut c = Collector::new(16);
         c.servers = vec![ServerStats {
