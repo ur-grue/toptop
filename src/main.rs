@@ -46,6 +46,9 @@ OPTIONS:
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default), 'csv', or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus endpoint (default 127.0.0.1:9709)
+        --alert-vram <PCT>   VRAM % that triggers the spill-risk alert (default 90)
+        --alert-kv <PCT>     KV-cache % considered saturated (default 95)
+        --alert-queue <N>    Queued requests considered a backlog (default 8)
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -143,6 +146,30 @@ fn main() -> Result<()> {
                 };
                 serve_addr = Some(addr);
             }
+            "--alert-vram" => {
+                let v = args
+                    .next()
+                    .context("--alert-vram requires a percentage")?
+                    .parse::<f32>()
+                    .context("--alert-vram value must be a number")?;
+                cfg.alerts.vram_spill_pct = v.clamp(1.0, 100.0);
+            }
+            "--alert-kv" => {
+                let v = args
+                    .next()
+                    .context("--alert-kv requires a percentage")?
+                    .parse::<f64>()
+                    .context("--alert-kv value must be a number")?;
+                cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
+            }
+            "--alert-queue" => {
+                let v = args
+                    .next()
+                    .context("--alert-queue requires a count")?
+                    .parse::<f64>()
+                    .context("--alert-queue value must be a number")?;
+                cfg.alerts.queue_high = v.max(1.0);
+            }
             "--snapshot" => snapshot = true,
             "--export" => {
                 // Optional format argument: `json` (default) or `prometheus`.
@@ -215,7 +242,10 @@ fn run_export(cfg: &Config, format: &str) -> Result<()> {
     std::thread::sleep(Duration::from_millis(350));
     app.on_tick();
     match format {
-        "prometheus" => print!("{}", toptop::export::to_prometheus(&app.collector)),
+        "prometheus" => print!(
+            "{}",
+            toptop::export::to_prometheus(&app.collector, &cfg.alerts)
+        ),
         "csv" => print!("{}", toptop::export::to_csv(&app.collector, 20)),
         _ => println!("{}", toptop::export::to_json(&app.collector, 20)),
     }

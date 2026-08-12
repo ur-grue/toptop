@@ -200,7 +200,7 @@ impl App {
             conn_offset: 0,
             conn_rows: 0,
             alerts: Vec::new(),
-            alert_cfg: AlertConfig::default(),
+            alert_cfg: cfg.alerts.clone(),
             status: None,
         };
         app.rebuild_proc_view();
@@ -222,6 +222,7 @@ impl App {
             tree: self.tree,
             per_core: self.per_core,
             layout: self.layout,
+            alerts: self.alert_cfg.clone(),
         }
     }
 

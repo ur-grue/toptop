@@ -306,6 +306,9 @@ OPTIONS:
         --snapshot       Print a one‑shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus /metrics endpoint (default 127.0.0.1:9709)
+        --alert-vram <PCT>   VRAM % that triggers the spill‑risk alert (default 90)
+        --alert-kv <PCT>     KV‑cache % considered saturated (default 95)
+        --alert-queue <N>    Queued requests considered a backlog (default 8)
     -h, --help           Show help
     -V, --version        Show version
 ```
@@ -388,6 +391,14 @@ Settings live at `~/.config/toptop/config.conf` (honoring `XDG_CONFIG_HOME`) and
 on exit, so your theme, refresh rate, tree mode and layout persist between runs. CLI flags
 always override the file. Point `--config <path>` at an explicit file (handy for testing and
 dotfile setups), or pass `--no-save` to leave the file untouched on exit.
+
+Alert thresholds (VRAM spill, KV‑cache saturation, queue backlog) are tunable there too:
+
+```ini
+alert_vram_pct = 85   # VRAM % that triggers the spill-risk alert (default 90)
+alert_kv_pct = 90     # KV-cache % considered saturated (default 95)
+alert_queue = 4       # queued requests considered a backlog (default 8)
+```
 
 ## 🤝 Contributing
 

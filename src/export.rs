@@ -292,7 +292,7 @@ fn plabel(s: &str) -> String {
 /// Render a snapshot in Prometheus exposition format so toptop can be scraped
 /// into Grafana/VictoriaMetrics — the local-inference observability layer.
 /// Pair with a tiny `socat`/`while` loop, or scrape `--export json` directly.
-pub fn to_prometheus(c: &Collector) -> String {
+pub fn to_prometheus(c: &Collector, alert_cfg: &AlertConfig) -> String {
     let mut s = String::with_capacity(4096);
     let mut metric = |name: &str, help: &str, value: String| {
         s.push_str(&format!(
@@ -384,7 +384,7 @@ pub fn to_prometheus(c: &Collector) -> String {
     }
 
     // Firing alerts — one gauge per active alert so Alertmanager can page.
-    let alerts = alerts::evaluate(c, &AlertConfig::default());
+    let alerts = alerts::evaluate(c, alert_cfg);
     if !alerts.is_empty() {
         s.push_str("# HELP toptop_alert A firing alert (1 = active).\n# TYPE toptop_alert gauge\n");
         for a in &alerts {
@@ -467,7 +467,7 @@ mod tests {
     #[test]
     fn prometheus_has_core_metrics() {
         let c = Collector::new(64);
-        let p = to_prometheus(&c);
+        let p = to_prometheus(&c, &AlertConfig::default());
         for m in [
             "# TYPE toptop_cpu_usage_percent gauge",
             "toptop_mem_total_bytes ",
