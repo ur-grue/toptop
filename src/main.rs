@@ -37,6 +37,7 @@ OPTIONS:
         --tree           Start in process-tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local-LLM GPU view on launch
+        --demo           Simulate a busy GPU + vLLM server (see the AI view, no GPU needed)
         --remote <HOSTS> Multi-host fleet view; comma-separated SSH hosts
                          (use 'local' for this machine)
         --remote-cmd <C> Command run on each remote (default: toptop --export json)
@@ -74,6 +75,7 @@ struct Opts {
     snapshot: bool,
     export: Option<&'static str>,
     start_ai: bool,
+    demo: bool,
     remote_hosts: Vec<String>,
     remote_cmd: String,
     serve_addr: Option<String>,
@@ -106,6 +108,7 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
         snapshot: false,
         export: None,
         start_ai: false,
+        demo: false,
         remote_hosts: Vec::new(),
         remote_cmd: "toptop --export json".to_string(),
         serve_addr: None,
@@ -143,6 +146,7 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
             "--tree" => opts.cfg.tree = true,
             "--no-tree" => opts.cfg.tree = false,
             "--ai" => opts.start_ai = true,
+            "--demo" => opts.demo = true,
             "--remote" => {
                 let list = args
                     .next()
@@ -265,6 +269,7 @@ fn main() -> Result<()> {
         snapshot,
         export,
         start_ai,
+        demo,
         remote_hosts,
         remote_cmd,
         serve_addr,
@@ -293,7 +298,8 @@ fn main() -> Result<()> {
     }
 
     let mut app = App::new(&cfg);
-    app.show_ai = start_ai;
+    app.show_ai = start_ai || demo;
+    app.demo = demo;
     let mut terminal = setup_terminal().context("failed to initialize terminal")?;
     let result = run(&mut terminal, &mut app);
     restore_terminal(&mut terminal).ok();

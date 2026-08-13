@@ -4,6 +4,7 @@
 pub mod alerts;
 pub mod app;
 pub mod config;
+pub mod demo;
 pub mod export;
 pub mod fleet;
 pub mod history;

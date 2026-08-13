@@ -12,7 +12,7 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
       v1.0.0) — `brew tap ur-grue/toptop https://github.com/ur-grue/toptop`.
       Optionally create `ur-grue/homebrew-tap` later for the shorter
       `brew install ur-grue/tap/toptop` form.
-- [ ] Repo social-preview image (Settings → General → Social preview): upload
+- [ ] Upload `assets/social-preview.png` as the repo social-preview image (Settings → General → Social preview): upload
       a render of `assets/ai-demo.svg` — it's what shows when the link is shared
 - [ ] Verify README renders correctly on github.com/ur-grue/toptop (banner,
       animated hero, screenshots)
@@ -43,6 +43,9 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
 > - throttle-reason flags, tokens/sec/watt, per-process VRAM
 > - `--serve-metrics` = a Prometheus endpoint; `--remote host1,host2` = a
 >   fleet view over plain SSH (no agents)
+>
+> No GPU? `toptop --demo` simulates a busy 4090 + vLLM server so you can see
+> the whole AI view (spill warning included) on any machine.
 >
 > It's also a full htop/btop-style monitor underneath. Read-only, localhost
 > scrapes only, no telemetry. Happy to answer anything about the socket→PID

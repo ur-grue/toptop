@@ -57,6 +57,13 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 > **tokens/sec**, KV‑cache pressure and queue depth — then exports it as JSON **or Prometheus**
 > for Grafana, or fans out across a cluster with the [fleet view](#-multi-host-fleet-view).
 
+> **🎮 Try the AI view right now — no GPU needed:**
+> ```bash
+> toptop --demo
+> ```
+> Simulates a busy RTX 4090 + vLLM server on top of your real system: tokens/sec tick, the
+> VRAM meter climbs to the spill threshold, alerts fire. Your processes, CPU and memory stay real.
+
 <details open>
 <summary><b>🖥️ …and a gorgeous full system monitor</b> &nbsp;(the default view)</summary>
 
@@ -172,6 +179,21 @@ Inference servers (auto-discovered)
     83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms
 ```
 
+## 🥊 How it compares
+
+| | **toptop** | htop | btop | nvtop / nvitop |
+|---|:---:|:---:|:---:|:---:|
+| Full system monitor (CPU/mem/net/disk/procs) | ✅ | ✅ | ✅ | ✖️ (GPU-focused) |
+| GPU utilization + VRAM | ✅ | ✖️ | ✅ | ✅ |
+| Compute **vs. memory-bandwidth** side by side | ✅ | ✖️ | ✖️ | partial |
+| Inference-server auto-discovery (tokens/sec, KV, TTFT) | ✅ | ✖️ | ✖️ | ✖️ |
+| VRAM-spill / throttle / queue **alerts** | ✅ | ✖️ | ✖️ | ✖️ |
+| Prometheus exporter built in | ✅ | ✖️ | ✖️ | ✖️ |
+| Multi-host fleet view over SSH | ✅ | ✖️ | ✖️ | ✖️ |
+| Zero runtime dependencies | ✅ | ✅ | ✅ | ✖️ (needs NVML) |
+
+All of those are excellent tools — toptop's lane is the **local-inference observability** column.
+
 ## 📡 Export & observability
 
 toptop isn't just a live dashboard — it's a metrics **source**. Emit a snapshot as
@@ -198,6 +220,11 @@ toptop_alert{key="vram_spill",detail="gpu0",level="warn"} 1
 spill, GPU throttling, KV‑cache saturation, request‑queue backlog. They show as a red banner in
 the TUI (top of the `a` view) **and** as `toptop_alert{…}` gauges, so you can page on them with
 Prometheus Alertmanager. The same JSON powers the multi‑host fleet view below.
+
+A ready-made **Grafana dashboard** (tokens/sec, compute-vs-bandwidth, VRAM, KV/queue,
+power/temp, firing alerts) ships at
+[`assets/grafana/toptop-dashboard.json`](assets/grafana/toptop-dashboard.json) —
+*Dashboards → Import*, pick your Prometheus datasource, done.
 
 ## 🔒 What it accesses
 

@@ -335,7 +335,10 @@ pub fn to_prometheus(c: &Collector, alert_cfg: &AlertConfig) -> String {
     if !c.gpus.is_empty() {
         let gpu_metrics: &[(&str, &str)] = &[
             ("toptop_gpu_util_percent", "GPU core utilization."),
-            ("toptop_gpu_mem_bandwidth_percent", "GPU memory bandwidth utilization."),
+            (
+                "toptop_gpu_mem_bandwidth_percent",
+                "GPU memory bandwidth utilization.",
+            ),
             ("toptop_gpu_mem_used_bytes", "GPU memory used."),
             ("toptop_gpu_mem_total_bytes", "GPU memory total."),
             ("toptop_gpu_power_watts", "GPU power draw."),
@@ -377,11 +380,23 @@ pub fn to_prometheus(c: &Collector, alert_cfg: &AlertConfig) -> String {
     // Inference servers — each metric family gets its own TYPE declaration.
     if !c.servers.is_empty() {
         let infer_metrics: &[(&str, &str)] = &[
-            ("toptop_inference_tokens_per_second", "Generation throughput."),
-            ("toptop_inference_prefill_tokens_per_second", "Prefill throughput."),
+            (
+                "toptop_inference_tokens_per_second",
+                "Generation throughput.",
+            ),
+            (
+                "toptop_inference_prefill_tokens_per_second",
+                "Prefill throughput.",
+            ),
             ("toptop_inference_kv_cache_percent", "KV-cache utilization."),
-            ("toptop_inference_requests_running", "Active inference requests."),
-            ("toptop_inference_requests_waiting", "Queued inference requests."),
+            (
+                "toptop_inference_requests_running",
+                "Active inference requests.",
+            ),
+            (
+                "toptop_inference_requests_waiting",
+                "Queued inference requests.",
+            ),
             ("toptop_inference_ttft_ms", "Time to first token."),
         ];
         for (name, help) in infer_metrics {

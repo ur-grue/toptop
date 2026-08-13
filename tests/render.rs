@@ -83,6 +83,33 @@ fn overlays_render() {
 }
 
 #[test]
+fn demo_mode_populates_and_renders() {
+    let mut app = App::new(&Config::default());
+    app.demo = true;
+    app.show_ai = true;
+    app.on_tick();
+    assert!(!app.collector.gpus.is_empty(), "demo must synthesize a GPU");
+    assert!(
+        !app.collector.servers.is_empty(),
+        "demo must synthesize a server"
+    );
+    for (w, h) in [(100, 30), (60, 14)] {
+        render_at(&mut app, w, h);
+    }
+    // Tick through enough frames to hit the alert-firing states.
+    let mut saw_alert = false;
+    for _ in 0..40 {
+        app.on_tick();
+        saw_alert |= !app.alerts.is_empty();
+    }
+    assert!(
+        saw_alert,
+        "demo should trip at least one alert within 40 ticks"
+    );
+    render_at(&mut app, 100, 30);
+}
+
+#[test]
 fn ai_view_renders() {
     use toptop::metrics::gpu::{Gpu, GpuProc};
     let mut app = App::new(&Config::default());

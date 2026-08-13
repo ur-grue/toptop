@@ -163,6 +163,9 @@ pub struct App {
     pub conn_rows: usize,
     /// Currently-firing threshold alerts (recomputed each tick).
     pub alerts: Vec<Alert>,
+    /// `--demo` mode: overlay synthesized GPU + inference data each tick.
+    pub demo: bool,
+    demo_tick: u64,
     pub alert_cfg: AlertConfig,
     pub status: Option<(String, Instant)>,
 }
@@ -200,6 +203,8 @@ impl App {
             conn_offset: 0,
             conn_rows: 0,
             alerts: Vec::new(),
+            demo: false,
+            demo_tick: 0,
             alert_cfg: cfg.alerts.clone(),
             status: None,
         };
@@ -232,6 +237,10 @@ impl App {
         // target can't disappear from the table between prompt and confirm.
         if !self.paused && self.pending_kill.is_none() {
             self.collector.refresh();
+            if self.demo {
+                self.demo_tick += 1;
+                crate::demo::apply(&mut self.collector, self.demo_tick);
+            }
         }
         self.rebuild_proc_view();
         self.alerts = alerts::evaluate(&self.collector, &self.alert_cfg);
@@ -624,8 +633,7 @@ impl App {
                 KeyCode::PageDown => self.scroll_conn(self.conn_rows.max(1) as isize),
                 KeyCode::Home | KeyCode::Char('g') => self.conn_offset = 0,
                 KeyCode::End | KeyCode::Char('G') => {
-                    self.conn_offset =
-                        self.connections.len().saturating_sub(self.conn_rows.max(1))
+                    self.conn_offset = self.connections.len().saturating_sub(self.conn_rows.max(1))
                 }
                 KeyCode::Char('p') => self.cycle_theme(true),
                 _ => {}
