@@ -49,6 +49,7 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
     eprintln!("toptop: serving Prometheus metrics at http://{addr}/metrics (Ctrl-C to stop)");
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
         let mut buf = [0u8; 2048];
         let n = stream.read(&mut buf).unwrap_or(0);
         let req = String::from_utf8_lossy(&buf[..n]);
