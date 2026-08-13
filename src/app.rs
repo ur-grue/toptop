@@ -244,12 +244,12 @@ impl App {
     /// Re-snapshot network connections and clamp the scroll offset.
     fn refresh_connections(&mut self) {
         self.connections = self.collector.connections();
-        let max = self.connections.len().saturating_sub(1);
+        let max = self.connections.len().saturating_sub(self.conn_rows.max(1));
         self.conn_offset = self.conn_offset.min(max);
     }
 
     fn scroll_conn(&mut self, delta: isize) {
-        let max = self.connections.len().saturating_sub(1) as isize;
+        let max = self.connections.len().saturating_sub(self.conn_rows.max(1)) as isize;
         let next = (self.conn_offset as isize + delta).clamp(0, max.max(0));
         self.conn_offset = next as usize;
     }

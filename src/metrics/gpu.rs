@@ -472,7 +472,9 @@ impl GpuMonitor {
         let latest = Arc::new(Mutex::new(GpuSnapshot::default()));
         let initial = query_all();
         if !initial.gpus.is_empty() {
-            *latest.lock().unwrap() = initial;
+            if let Ok(mut slot) = latest.lock() {
+                *slot = initial;
+            }
             let shared = Arc::clone(&latest);
             std::thread::Builder::new()
                 .name("toptop-gpu".into())

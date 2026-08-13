@@ -126,7 +126,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         };
         spans.push(Span::styled(
             format!("  {}{:.0}%", glyph, bat.percent),
-            Style::default().fg(theme.grad(t)),
+            Style::default().fg(theme.grad(1.0 - t)),
         ));
     }
     if !app.alerts.is_empty() {
