@@ -624,7 +624,8 @@ impl App {
                 KeyCode::PageDown => self.scroll_conn(self.conn_rows.max(1) as isize),
                 KeyCode::Home | KeyCode::Char('g') => self.conn_offset = 0,
                 KeyCode::End | KeyCode::Char('G') => {
-                    self.conn_offset = self.connections.len().saturating_sub(1)
+                    self.conn_offset =
+                        self.connections.len().saturating_sub(self.conn_rows.max(1))
                 }
                 KeyCode::Char('p') => self.cycle_theme(true),
                 _ => {}

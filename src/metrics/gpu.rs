@@ -67,7 +67,7 @@ fn fopt(s: &str) -> Option<f32> {
     if s.is_empty() || s.starts_with('[') {
         return None;
     }
-    s.parse::<f32>().ok()
+    s.parse::<f32>().ok().filter(|v| v.is_finite())
 }
 
 // NVML throttle reasons we treat as a real (performance-limiting) throttle:
