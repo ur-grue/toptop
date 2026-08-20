@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-199%20green-success)
+![Tests](https://img.shields.io/badge/tests-203%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -381,6 +381,8 @@ OPTIONS:
 
 ## 🎨 Themes
 
+**`cyberpunk` is the default** — it is the look the banner and the hero
+animation are drawn in, so a first launch matches what brought you here.
 Cycle live with `p` / `P`, or launch with `--theme <name>`:
 
 `gruvbox` &nbsp;·&nbsp; `nord` &nbsp;·&nbsp; `dracula` &nbsp;·&nbsp; `tokyonight` &nbsp;·&nbsp; `matrix` &nbsp;·&nbsp; `cyberpunk` &nbsp;·&nbsp; `paper` (for light backgrounds)
@@ -418,6 +420,7 @@ cargo run --example fleet_preview   # render the fleet dashboard with sample hos
 cargo run -- --snapshot             # one-shot textual snapshot
 python3 scripts/make_banner.py      # regenerate the pixel-art banner (assets/banner.svg)
 python3 scripts/make_ai_demo.py     # regenerate the animated AI-view demo (assets/ai-demo.svg)
+                                    # (its palette is read from src/theme.rs, so it can't drift)
 ```
 
 The render tests drive the **full UI** through ratatui's headless `TestBackend` across

@@ -18,6 +18,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`cyberpunk` is now the default theme.** The project's banner and hero
+  animation were already drawn in it while a first launch showed gruvbox, so
+  the look that brings people here did not match the one they got. Existing
+  installs are unaffected — the theme is persisted in the config.
+- **The hero animation's palette is read from `src/theme.rs`** instead of being
+  copied into the generator script, so it cannot drift away from the real
+  colours again.
+
+### Fixed
+
+- **Dimmed text is now legible in every built-in theme.** `dim` carries units,
+  key hints, the alert timeline's relative ages and the diagnosis evidence
+  line — it is a visual weight, not permission to be unreadable. It sat at
+  2.5:1 in `matrix` and 3.1:1 in `tokyonight`, well under the 4.5:1 WCAG AA
+  bar. Every built-in now meets it, with hue preserved, and tests enforce the
+  floor for body text, dim text, accents and the full gradient range so it
+  cannot drift back.
+
+### Changed
+
 - **The shipped Grafana dashboard covers the new signals** — panels for the
   TTFT and TPOT percentile triads, KV-cache preemptions/sec (with a threshold
   at the alerting default), the prefill-vs-decode split and GPU throttling. A

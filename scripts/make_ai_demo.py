@@ -7,15 +7,48 @@ and the spill alert flashes. Re-run after edits:
     python3 scripts/make_ai_demo.py
 """
 import os
+import re
 
 W, H = 760, 396
-# Palette mirrors toptop's default `gruvbox` theme (src/theme.rs THEMES[0]) so
-# the hero graphic shows the colors users actually see on first launch.
-BG, BORDER = "#282828", "#fe8019"    # dark bg, accent-orange border
-TEXT, DIM = "#ebdbb2", "#928374"      # body text, dimmed labels
-ACCENT, AQUA = "#fe8019", "#83a598"   # titles/headings (orange), secondary (aqua)
-GREEN, YELLOW, RED = "#b8bb26", "#fabd2f", "#fb4934"  # load-gradient stops
-TRACK = "#3c3836"                     # meter track (selection bg)
+
+# The palette is read straight out of src/theme.rs rather than copied here, so
+# the hero graphic cannot drift away from the colors a first launch actually
+# shows — which is exactly what had happened before.
+THEME = "cyberpunk"
+
+
+def _palette(name):
+    src = os.path.join(os.path.dirname(__file__), os.pardir, "src", "theme.rs")
+    with open(src, encoding="utf-8") as fh:
+        text_src = fh.read()
+    block = re.search(
+        r'Theme \{\s*name: "%s",(.*?)gradient: &(\w+),' % name, text_src, re.S
+    )
+    if not block:
+        raise SystemExit(f"theme {name!r} not found in src/theme.rs")
+    fields = {
+        k: "#%02x%02x%02x" % (int(r), int(g), int(b))
+        for k, r, g, b in re.findall(
+            r"(\w+): (?:Some\()?rgb\((\d+), (\d+), (\d+)\)", block.group(1)
+        )
+    }
+    stops = re.search(
+        r"static %s: \[Rgb; \d+\] = \[(.*?)\];" % block.group(2), text_src, re.S
+    )
+    fields["gradient"] = [
+        "#%02x%02x%02x" % (int(r), int(g), int(b))
+        for r, g, b in re.findall(r"rgb\((\d+), (\d+), (\d+)\)", stops.group(1))
+    ]
+    return fields
+
+
+_P = _palette(THEME)
+BG, BORDER = _P["bg"], _P["accent"]
+TEXT, DIM = _P["fg"], _P["dim"]
+ACCENT, AQUA = _P["accent"], _P["accent2"]
+# The gradient's low, middle and high stops: calm → warning → saturated.
+GREEN, YELLOW, RED = _P["gradient"][0], _P["gradient"][1], _P["gradient"][-1]
+TRACK = _P["selection"]
 
 BAR_X, BAR_W, BAR_H = 188, 372, 16
 VAL_X = BAR_X + BAR_W + 14
