@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **KV-cache preemption surfaced as a critical alert** — when a serving runtime
+  runs out of KV cache it preempts in-flight requests, throwing away work
+  already done and recomputing it later. Throughput collapses while every
+  dashboard still shows a busy, healthy GPU. toptop scrapes vLLM's and
+  TensorRT-LLM's preemption counters, differences them into a rate, shows
+  `⟲ preempt 1.8/s` in the AI view, and alerts at **critical** — above a queue
+  backlog, because a backlog only delays work whereas preemption destroys it.
+  Tunable via `alert_preempt` / `--alert-preempt`, exported as
+  `toptop_inference_preemptions_{total,per_second}`. (#31)
+- **GPU compute-vs-bandwidth history** — per-GPU histories of compute,
+  memory-bandwidth and VRAM utilization, drawn in the AI view as one mirrored
+  braille graph (compute above the midline, bandwidth below). Token generation
+  is bandwidth-bound once the model is resident, so the divergence between the
+  two lines over time is the diagnosis: bandwidth pinned while compute idles
+  means memory-bound, and a faster GPU core will not help. (#32)
+
 - **Inference SLO triad** — TTFT *and* TPOT (time-per-output-token, the
   inter-token latency users feel while a response streams) as p50/p95/p99,
   derived by parsing the runtimes' Prometheus histogram buckets with linear

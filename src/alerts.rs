@@ -45,6 +45,11 @@ pub struct AlertConfig {
     pub kv_high_pct: f64,
     /// Number of waiting requests considered a backlog.
     pub queue_high: f64,
+    /// Preemptions per second at or above which the server is thrashing its
+    /// KV cache. The default is deliberately just above zero: a preempted
+    /// request throws away work already done, so a *sustained* nonzero rate is
+    /// always worth knowing about.
+    pub preempt_rate_high: f64,
 }
 
 impl Default for AlertConfig {
@@ -53,6 +58,7 @@ impl Default for AlertConfig {
             vram_spill_pct: 90.0,
             kv_high_pct: 95.0,
             queue_high: 8.0,
+            preempt_rate_high: 0.2,
         }
     }
 }
@@ -98,6 +104,20 @@ pub fn evaluate(c: &Collector, cfg: &AlertConfig) -> Vec<Alert> {
                     key: "queue_backlog",
                     detail: tag.clone(),
                     message: format!("{tag} {waiting:.0} requests queued"),
+                });
+            }
+        }
+        if let Some(rate) = sv.preempt_rate {
+            if rate >= cfg.preempt_rate_high {
+                out.push(Alert {
+                    // Critical: unlike a queue backlog, preemption actively
+                    // destroys work that was already done.
+                    level: Level::Crit,
+                    key: "kv_preemption",
+                    detail: tag.clone(),
+                    message: format!(
+                        "{tag} preempting {rate:.1}/s — KV cache thrashing, work is being recomputed"
+                    ),
                 });
             }
         }
@@ -180,11 +200,37 @@ mod tests {
             vram_spill_pct: 50.0,
             kv_high_pct: 75.0,
             queue_high: 2.0,
+            ..AlertConfig::default()
         };
         let keys: Vec<_> = evaluate(&c, &tight).iter().map(|x| x.key).collect();
         assert!(keys.contains(&"vram_spill"));
         assert!(keys.contains(&"kv_high"));
         assert!(keys.contains(&"queue_backlog"));
+    }
+
+    #[test]
+    fn preemption_is_critical_and_thresholded() {
+        let mut c = Collector::new(16);
+        c.servers = vec![ServerStats {
+            runtime: "vLLM",
+            port: 8000,
+            preempt_rate: Some(1.5),
+            ..Default::default()
+        }];
+        let a = evaluate(&c, &AlertConfig::default());
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].key, "kv_preemption");
+        assert_eq!(
+            a[0].level,
+            Level::Crit,
+            "preemption throws away completed work — it outranks a queue backlog"
+        );
+
+        // A server that has simply never preempted must stay silent.
+        c.servers[0].preempt_rate = Some(0.0);
+        assert!(evaluate(&c, &AlertConfig::default()).is_empty());
+        c.servers[0].preempt_rate = None;
+        assert!(evaluate(&c, &AlertConfig::default()).is_empty());
     }
 
     #[test]

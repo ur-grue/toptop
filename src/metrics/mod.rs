@@ -160,6 +160,11 @@ pub struct Collector {
     pub gpus: Vec<Gpu>,
     /// Processes holding GPU memory (NVIDIA only), for the AI/LLM view.
     pub gpu_procs: Vec<GpuProc>,
+    /// Per-GPU compute and memory-bandwidth history, indexed like `gpus`.
+    /// Token generation is bandwidth-bound once the model is resident, so the
+    /// *divergence* between these two lines over time is the single most
+    /// diagnostic picture toptop can draw.
+    pub gpu_history: Vec<GpuHistory>,
     /// Auto-discovered local inference servers (tokens/sec, KV cache, …).
     pub servers: Vec<ServerStats>,
     /// Per-server time series (keyed by pid+port) feeding the AI-view
@@ -167,6 +172,27 @@ pub struct Collector {
     pub server_history: std::collections::HashMap<(u32, u16), ServerHistory>,
     pub battery: Option<Battery>,
     pub uptime: u64,
+}
+
+/// Compute and memory-bandwidth utilization trends for one GPU.
+#[derive(Clone, Debug)]
+pub struct GpuHistory {
+    /// SM/compute utilization %, 0–100.
+    pub compute: History,
+    /// Memory-bandwidth utilization %, 0–100.
+    pub bandwidth: History,
+    /// VRAM used %, 0–100 — the spill story over time.
+    pub vram: History,
+}
+
+impl GpuHistory {
+    fn new(capacity: usize) -> Self {
+        Self {
+            compute: History::new(capacity),
+            bandwidth: History::new(capacity),
+            vram: History::new(capacity),
+        }
+    }
 }
 
 /// Tokens/sec and KV-cache trends for one inference server.
@@ -238,6 +264,7 @@ impl Collector {
             refresh_kind,
             proc_refresh,
             gpu_monitor: GpuMonitor::new(),
+            gpu_history: Vec::new(),
             infer_monitor: InferenceMonitor::with_targets(targets),
             prev_proc_io: std::collections::HashMap::new(),
             last_instant: None,
@@ -310,6 +337,7 @@ impl Collector {
                 p.gpu_mem = vram.get(&p.pid).copied().unwrap_or(0);
             }
         }
+        self.update_gpu_history();
         self.servers = self.infer_monitor.snapshot();
         self.update_server_history();
         // Battery level moves on the order of minutes; poll it at most this
@@ -327,6 +355,27 @@ impl Collector {
 
     /// Append this tick's tokens/sec and KV% to each live server's history,
     /// dropping the histories of servers that vanished.
+    /// Keep one history per GPU, resizing when GPUs appear or disappear.
+    /// A GPU that stops reporting utilization pushes 0 rather than nothing, so
+    /// the time axis stays honest — a gap would silently compress the graph.
+    fn update_gpu_history(&mut self) {
+        if self.gpu_history.len() != self.gpus.len() {
+            self.gpu_history = (0..self.gpus.len())
+                .map(|_| GpuHistory::new(self.history_len))
+                .collect();
+        }
+        for (g, h) in self.gpus.iter().zip(self.gpu_history.iter_mut()) {
+            h.compute
+                .push(if g.has_util { g.util_pct as f64 } else { 0.0 });
+            h.bandwidth.push(if g.has_mem_util {
+                g.mem_util as f64
+            } else {
+                0.0
+            });
+            h.vram.push(g.mem_pct() as f64);
+        }
+    }
+
     fn update_server_history(&mut self) {
         let live: std::collections::HashSet<(u32, u16)> =
             self.servers.iter().map(|s| (s.pid, s.port)).collect();
@@ -744,6 +793,71 @@ fn status_char(status: ProcessStatus) -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fake_gpu(util: f32, mem_util: f32, used: u64, total: u64) -> gpu::Gpu {
+        gpu::Gpu {
+            name: "TestGPU".into(),
+            util_pct: util,
+            has_util: true,
+            mem_util,
+            has_mem_util: true,
+            mem_used: used,
+            mem_total: total,
+            temp: 60.0,
+            power: 200.0,
+            power_limit: 400.0,
+            throttled: false,
+        }
+    }
+
+    #[test]
+    fn gpu_history_tracks_compute_bandwidth_and_vram() {
+        let mut c = Collector::new(8);
+        c.gpus = vec![fake_gpu(90.0, 30.0, 50, 100)];
+        c.update_gpu_history();
+        c.gpus = vec![fake_gpu(20.0, 95.0, 90, 100)];
+        c.update_gpu_history();
+
+        assert_eq!(c.gpu_history.len(), 1);
+        let h = &c.gpu_history[0];
+        assert_eq!(h.compute.tail(2), vec![90.0, 20.0]);
+        // The divergence this graph exists to show: compute fell, bandwidth
+        // pinned — memory-bound, and a faster GPU core would not help.
+        assert_eq!(h.bandwidth.tail(2), vec![30.0, 95.0]);
+        assert_eq!(h.vram.tail(2), vec![50.0, 90.0]);
+    }
+
+    #[test]
+    fn gpu_history_resizes_when_gpus_come_and_go() {
+        let mut c = Collector::new(8);
+        c.gpus = vec![fake_gpu(50.0, 50.0, 1, 2), fake_gpu(50.0, 50.0, 1, 2)];
+        c.update_gpu_history();
+        assert_eq!(c.gpu_history.len(), 2);
+        // A GPU disappearing (driver reload, container restart) resizes rather
+        // than indexing past the end.
+        c.gpus.pop();
+        c.update_gpu_history();
+        assert_eq!(c.gpu_history.len(), 1);
+        c.gpus.clear();
+        c.update_gpu_history();
+        assert!(c.gpu_history.is_empty());
+    }
+
+    #[test]
+    fn gpu_without_utilization_still_advances_the_time_axis() {
+        let mut c = Collector::new(8);
+        let mut g = fake_gpu(0.0, 0.0, 10, 100);
+        g.has_util = false;
+        g.has_mem_util = false;
+        c.gpus = vec![g];
+        c.update_gpu_history();
+        let before = c.gpu_history[0].compute.len();
+        c.update_gpu_history();
+        // Pushing 0 rather than nothing keeps the time axis honest — a gap
+        // would silently compress the graph.
+        assert_eq!(c.gpu_history[0].compute.len(), before + 1);
+        assert_eq!(c.gpu_history[0].compute.last(), 0.0);
+    }
 
     #[test]
     fn server_history_tracks_and_prunes() {

@@ -168,7 +168,7 @@ pub fn to_json(c: &Collector, top_procs: usize) -> String {
         .iter()
         .map(|sv| {
             format!(
-                "{{\"runtime\":\"{}\",\"pid\":{},\"port\":{},\"model\":\"{}\",\"gen_tps\":{},\"prompt_tps\":{},\"running\":{},\"waiting\":{},\"kv_pct\":{},\"ttft_ms\":{},\"gpu_offload_pct\":{}}}",
+                "{{\"runtime\":\"{}\",\"pid\":{},\"port\":{},\"model\":\"{}\",\"gen_tps\":{},\"prompt_tps\":{},\"running\":{},\"waiting\":{},\"kv_pct\":{},\"ttft_ms\":{},\"gpu_offload_pct\":{},\"preemptions\":{},\"preempt_rate\":{}}}",
                 esc(sv.runtime),
                 sv.pid,
                 sv.port,
@@ -180,6 +180,8 @@ pub fn to_json(c: &Collector, top_procs: usize) -> String {
                 optnum(sv.kv_pct),
                 optnum(sv.ttft_ms),
                 optnum(sv.gpu_offload_pct),
+                optnum(sv.preemptions),
+                optnum(sv.preempt_rate),
             )
         })
         .collect();
@@ -399,6 +401,14 @@ pub fn to_prometheus(c: &Collector, alert_cfg: &AlertConfig) -> String {
             ),
             ("toptop_inference_ttft_ms", "Time to first token."),
             (
+                "toptop_inference_preemptions_total",
+                "Requests preempted because the KV cache ran out.",
+            ),
+            (
+                "toptop_inference_preemptions_per_second",
+                "Rate of KV-cache preemptions.",
+            ),
+            (
                 "toptop_inference_ttft_p50_ms",
                 "Time to first token, 50th percentile.",
             ),
@@ -443,6 +453,8 @@ pub fn to_prometheus(c: &Collector, alert_cfg: &AlertConfig) -> String {
             s.push_str(&g("requests_running", sv.running));
             s.push_str(&g("requests_waiting", sv.waiting));
             s.push_str(&g("ttft_ms", sv.ttft_ms));
+            s.push_str(&g("preemptions_total", sv.preemptions));
+            s.push_str(&g("preemptions_per_second", sv.preempt_rate));
             s.push_str(&g("ttft_p50_ms", sv.ttft.map(|p| p.p50)));
             s.push_str(&g("ttft_p95_ms", sv.ttft.map(|p| p.p95)));
             s.push_str(&g("ttft_p99_ms", sv.ttft.map(|p| p.p99)));

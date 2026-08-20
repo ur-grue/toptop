@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-126%20green-success)
+![Tests](https://img.shields.io/badge/tests-132%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -133,6 +133,8 @@ sensors, battery, seven themes — all in a single **~1 MB binary with zero runt
 | 🌐 **Network + connections** | per‑interface rx/tx braille graph; a live TCP/UDP table mapping sockets → process (`n`) |
 | 🗄️ **Disk + sensors** | per‑mount usage, read/write I/O graph, temperatures, battery |
 | 📊 **Inference SLO triad** | TTFT and TPOT p50/p95/p99 from vLLM/TGI/TensorRT-LLM/SGLang histograms, plus the prefill-vs-decode phase mix |
+| ⟲ **KV-cache preemption** | The signal no other tool shows: requests thrown away and recomputed because the cache ran out — a critical alert, not a footnote |
+| 📉 **Compute vs bandwidth over time** | A mirrored braille graph per GPU: compute above the line, memory bandwidth below. The divergence *is* the diagnosis |
 | 🎨 **Seven themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk` · `paper` (light terminals); `full`/`cpu`/`process` presets |
 | 🪶 **Tiny & safe** | ~1 MB binary, zero runtime deps, adaptive 250‑col→tiny layout, restores your terminal even on panic |
 
@@ -337,6 +339,8 @@ OPTIONS:
         --alert-vram <PCT>   VRAM % that triggers the spill‑risk alert (default 90)
         --alert-kv <PCT>     KV‑cache % considered saturated (default 95)
         --alert-queue <N>    Queued requests considered a backlog (default 8)
+        --alert-preempt <R>  KV-cache preemptions/sec that trigger a critical alert
+                             (default 0.2 — preemption throws away completed work)
     -h, --help           Show help
     -V, --version        Show version
 ```
@@ -412,6 +416,42 @@ source completions/toptop.bash                    # bash (or copy to /etc/bash_c
 cp completions/_toptop ~/.zfunc/                  # zsh  (ensure ~/.zfunc is on your $fpath)
 cp completions/toptop.fish ~/.config/fish/completions/   # fish
 ```
+
+### KV-cache preemption — the metric nothing else surfaces
+
+When a serving runtime runs out of KV cache, it **preempts** in-flight
+requests: the work already done on them is thrown away and recomputed later.
+Throughput collapses, latency spikes — and every dashboard still shows a busy,
+healthy-looking GPU. `nvidia-smi` cannot see it, and neither can any other
+terminal monitor.
+
+toptop scrapes the counter, differences it into a rate, and treats a sustained
+nonzero rate as **critical** — above a queue backlog, because a backlog only
+delays work while preemption destroys work already done:
+
+```
+  vLLM:8000  Llama-3-8B
+    83.4 tok/s  prefill 1200/s  kv 99%  req 4/12  ⟲ preempt 1.8/s
+```
+
+Tune with `alert_preempt = 0.5` or `--alert-preempt 0.5`; exported as
+`toptop_inference_preemptions_{total,per_second}`.
+
+### Compute vs memory bandwidth, over time
+
+Token generation is memory-bandwidth-bound once the model is resident. toptop
+draws both as one mirrored braille graph per GPU — compute above the midline,
+bandwidth below:
+
+```
+  trend      compute ▲  /  ▼ bandwidth
+             ⢀⣀⣠⣤⣶⣶⣤⣄⣀⡀⢀⣀⣠⣤⣶
+             ⠉⠛⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+```
+
+Bandwidth pinned while compute idles means you are memory-bound and a faster
+GPU core will not help you. That divergence is the whole diagnosis, and it is
+only visible over time.
 
 ### Remote and non-Linux inference servers
 

@@ -49,6 +49,14 @@ pub struct ServerStats {
     /// as. Manual targets have no local process, so this replaces the PID as
     /// the label.
     pub addr: Option<String>,
+    /// Cumulative requests preempted because the KV cache ran out. When a
+    /// server preempts, the work already done on that request is thrown away
+    /// and recomputed later — throughput collapses while every dashboard still
+    /// shows a healthy-looking GPU. This is the number that explains it.
+    pub preemptions: Option<f64>,
+    /// Preemptions per second, differenced from the counter. Anything above
+    /// zero is worth acting on.
+    pub preempt_rate: Option<f64>,
 }
 
 /// The p50/p95/p99 triad of a latency distribution, in milliseconds.
@@ -410,6 +418,10 @@ pub fn stats_from_prometheus(text: &str, pid: u32, port: u16) -> Option<ServerSt
         s.running = prom_sum(text, "vllm:num_requests_running");
         s.waiting = prom_sum(text, "vllm:num_requests_waiting");
         s.model = prom_label(text, "vllm:", "model_name").unwrap_or_default();
+        // vLLM renamed this counter across versions; both spellings mean the
+        // same thing, and a server that has never preempted omits it entirely.
+        s.preemptions = prom_sum(text, "vllm:num_preemptions_total")
+            .or_else(|| prom_sum(text, "vllm:num_preemptions"));
         if let (Some(sum), Some(cnt)) = (
             prom_sum(text, "vllm:time_to_first_token_seconds_sum"),
             prom_sum(text, "vllm:time_to_first_token_seconds_count"),
@@ -426,6 +438,7 @@ pub fn stats_from_prometheus(text: &str, pid: u32, port: u16) -> Option<ServerSt
         s.running = prom_sum(text, "trtllm_num_requests_running");
         s.waiting = prom_sum(text, "trtllm_num_requests_waiting");
         s.model = prom_label(text, "trtllm_", "model_name").unwrap_or_default();
+        s.preemptions = prom_sum(text, "trtllm_num_preemptions_total");
         if let (Some(sum), Some(cnt)) = (
             prom_sum(text, "trtllm_time_to_first_token_seconds_sum"),
             prom_sum(text, "trtllm_time_to_first_token_seconds_count"),
@@ -715,6 +728,11 @@ fn apply_counter_rates(
             }
         }
     }
+    // Preemption rate: the counter is cumulative, and it is the *rate* that
+    // says whether the server is thrashing right now.
+    if let Some(preempt) = s.preemptions {
+        s.preempt_rate = counter_rate(prev, (pid, port, "preempt"), preempt, now);
+    }
     if let Some(p) = prom_sum(body, prompt_metric) {
         if let Some(rate) = counter_rate(prev, (pid, port, "prompt"), p, now) {
             if s.prompt_tps.is_none() {
@@ -893,6 +911,59 @@ sglang:time_to_first_token_seconds_bucket{model_name=\"Qwen2-7B\",le=\"+Inf\"} 4
         assert_eq!(s.gen_tps, Some(142.5));
         assert_eq!(s.ttft_ms, Some(300.0));
         assert!(s.ttft.is_some());
+    }
+
+    #[test]
+    fn vllm_preemption_counter_is_parsed() {
+        let text = "\
+vllm:num_requests_running 4
+vllm:gpu_cache_usage_perc 0.99
+vllm:num_preemptions_total{model_name=\"Llama-3-8B\"} 137
+";
+        let s = stats_from_prometheus(text, 1, 8000).expect("vLLM");
+        assert_eq!(s.preemptions, Some(137.0));
+        // The rate needs two scrapes; a single parse has none yet.
+        assert_eq!(s.preempt_rate, None);
+
+        // The older spelling is accepted too.
+        let old = stats_from_prometheus("vllm:num_preemptions 5\n", 1, 8000).expect("vLLM");
+        assert_eq!(old.preemptions, Some(5.0));
+
+        // A server that has never preempted omits the counter entirely, which
+        // must read as "no data", not as zero preemptions.
+        let none = stats_from_prometheus("vllm:num_requests_running 1\n", 1, 8000).unwrap();
+        assert_eq!(none.preemptions, None);
+    }
+
+    #[test]
+    fn preemption_rate_is_differenced_across_scrapes() {
+        let mut prev = HashMap::new();
+        let t0 = Instant::now();
+        let mut s = ServerStats {
+            runtime: "vLLM",
+            preemptions: Some(100.0),
+            ..Default::default()
+        };
+        apply_counter_rates(&mut s, "", &mut prev, 1, 8000, t0);
+        assert_eq!(s.preempt_rate, None, "first scrape has no baseline");
+
+        let mut s2 = ServerStats {
+            runtime: "vLLM",
+            preemptions: Some(104.0),
+            ..Default::default()
+        };
+        apply_counter_rates(&mut s2, "", &mut prev, 1, 8000, t0 + Duration::from_secs(2));
+        assert_eq!(s2.preempt_rate, Some(2.0), "4 preemptions over 2s");
+
+        // A counter that goes backwards (server restarted) must not produce a
+        // negative rate — it produces none until a new baseline exists.
+        let mut s3 = ServerStats {
+            runtime: "vLLM",
+            preemptions: Some(1.0),
+            ..Default::default()
+        };
+        apply_counter_rates(&mut s3, "", &mut prev, 1, 8000, t0 + Duration::from_secs(4));
+        assert_eq!(s3.preempt_rate, None, "a counter reset is not a rate");
     }
 
     #[test]

@@ -52,6 +52,8 @@ OPTIONS:
         --alert-vram <PCT>   VRAM % that triggers the spill-risk alert (default 90)
         --alert-kv <PCT>     KV-cache % considered saturated (default 95)
         --alert-queue <N>    Queued requests considered a backlog (default 8)
+        --alert-preempt <R>  KV-cache preemptions/sec that trigger a critical alert
+                             (default 0.2 — preemption throws away completed work)
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -202,6 +204,14 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                     .parse::<f64>()
                     .map_err(|_| "--alert-kv value must be a number")?;
                 opts.cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
+            }
+            "--alert-preempt" => {
+                let v = args
+                    .next()
+                    .ok_or("--alert-preempt requires a rate (preemptions/second)")?
+                    .parse::<f64>()
+                    .map_err(|_| "--alert-preempt value must be a number")?;
+                opts.cfg.alerts.preempt_rate_high = v.max(0.0);
             }
             "--alert-queue" => {
                 let v = args
