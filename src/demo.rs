@@ -10,7 +10,7 @@
 //! the GPU periodically reports throttling — each of which trips its alert.
 
 use crate::metrics::gpu::{Gpu, GpuProc};
-use crate::metrics::{Collector, ServerStats};
+use crate::metrics::{Collector, Percentiles, ServerStats};
 
 /// A sine oscillation between `lo` and `hi` with the given period (in ticks).
 fn wave(t: u64, period: f64, lo: f64, hi: f64, phase: f64) -> f64 {
@@ -66,7 +66,19 @@ pub fn apply(c: &mut Collector, t: u64) {
         waiting: Some(wave(t, 13.0, 0.0, 9.0, 0.7).round()),
         kv_pct: Some(wave(t, 17.0, 38.0, 97.0, 0.4)),
         ttft_ms: Some(wave(t, 9.0, 120.0, 260.0, 0.9)),
+        // A realistic SLO triad: p95/p99 fan out from the median under load.
+        ttft: Some(Percentiles {
+            p50: wave(t, 9.0, 120.0, 260.0, 0.9),
+            p95: wave(t, 9.0, 260.0, 700.0, 0.9),
+            p99: wave(t, 9.0, 380.0, 1100.0, 0.9),
+        }),
+        tpot: Some(Percentiles {
+            p50: wave(t, 11.0, 11.0, 16.0, 0.3),
+            p95: wave(t, 11.0, 18.0, 34.0, 0.3),
+            p99: wave(t, 11.0, 24.0, 52.0, 0.3),
+        }),
         gpu_offload_pct: None,
+        addr: None,
     }];
 }
 

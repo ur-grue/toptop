@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-113%20green-success)
+![Tests](https://img.shields.io/badge/tests-126%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -132,6 +132,7 @@ sensors, battery, seven themes — all in a single **~1 MB binary with zero runt
 | ☠️ **Signal menu** | send any of nine signals (`SIGTERM`…`SIGUSR2`) behind a confirmation prompt; the status line distinguishes **delivered** from **permission denied** (signalling another user's process needs `sudo`) and **already‑exited**, so a failed signal explains itself instead of silently doing nothing |
 | 🌐 **Network + connections** | per‑interface rx/tx braille graph; a live TCP/UDP table mapping sockets → process (`n`) |
 | 🗄️ **Disk + sensors** | per‑mount usage, read/write I/O graph, temperatures, battery |
+| 📊 **Inference SLO triad** | TTFT and TPOT p50/p95/p99 from vLLM/TGI/TensorRT-LLM/SGLang histograms, plus the prefill-vs-decode phase mix |
 | 🎨 **Seven themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk` · `paper` (light terminals); `full`/`cpu`/`process` presets |
 | 🪶 **Tiny & safe** | ~1 MB binary, zero runtime deps, adaptive 250‑col→tiny layout, restores your terminal even on panic |
 
@@ -411,6 +412,21 @@ source completions/toptop.bash                    # bash (or copy to /etc/bash_c
 cp completions/_toptop ~/.zfunc/                  # zsh  (ensure ~/.zfunc is on your $fpath)
 cp completions/toptop.fish ~/.config/fish/completions/   # fish
 ```
+
+### Remote and non-Linux inference servers
+
+Auto-discovery walks `/proc` to map listening sockets to runtime processes, so
+it is localhost- and Linux-only. `--llm-server` bypasses it entirely:
+
+```bash
+toptop --llm-server gpu-box:8000 --llm-server 10.0.0.5:11434
+toptop --ai --llm-server '[::1]:8000'      # bracket IPv6 literals
+```
+
+Repeatable, and settable as `llm_servers = gpu-box:8000, 10.0.0.5:11434` in the
+config. Manual targets are scraped with the same parsers as discovered ones and
+labelled by their address (they have no local PID). This is also how macOS and
+Windows users get inference metrics today.
 
 ## 📦 Config
 

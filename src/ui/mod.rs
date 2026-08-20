@@ -1242,7 +1242,7 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 break;
             }
             let mut head = vec![Span::styled(
-                format!("  {} :{}", sv.runtime, sv.port),
+                format!("  {}", sv.label()),
                 Style::default()
                     .fg(theme.accent2.color())
                     .add_modifier(Modifier::BOLD),
@@ -1277,7 +1277,10 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 }
             }
             if let Some(p) = sv.prompt_tps {
-                stat.push(Span::styled(format!("  prefill {:.0}/s", p), dim(theme)));
+                stat.push(Span::styled(
+                    format!("  prefill {:.0}/s", p),
+                    Style::default().fg(theme.accent2.color()),
+                ));
             }
             if let Some(k) = sv.kv_pct {
                 stat.push(Span::styled(
@@ -1291,11 +1294,70 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                     dim(theme),
                 ));
             }
-            if let Some(t) = sv.ttft_ms {
+            // Only fall back to the mean TTFT when no histogram was available;
+            // the percentile line below says strictly more.
+            if let (Some(t), None) = (sv.ttft_ms, sv.ttft) {
                 stat.push(Span::styled(format!("  ttft {:.0}ms", t), dim(theme)));
             }
             if stat.len() > 1 {
                 lines.push(Line::from(stat));
+            }
+
+            // Prefill vs decode as a first-class split: the two phases have
+            // different bottlenecks (prefill is compute-bound, decode is
+            // memory-bandwidth-bound), so the mix is what tells you which one
+            // you are currently paying for.
+            if let (Some(share), true) = (sv.prefill_share_pct(), lines.len() + 1 < cap) {
+                let decode = 100.0 - share;
+                let (phase, pct) = if share >= decode {
+                    ("prefill", share)
+                } else {
+                    ("decode", decode)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("    phase  ", dim(theme)),
+                    Span::styled(
+                        format!("prefill {share:.0}%"),
+                        Style::default().fg(theme.accent2.color()),
+                    ),
+                    Span::styled(" · ", dim(theme)),
+                    Span::styled(
+                        format!("decode {decode:.0}%"),
+                        Style::default().fg(theme.grad(0.0)),
+                    ),
+                    Span::styled(
+                        format!("  — {phase}-dominated ({pct:.0}% of tokens)"),
+                        dim(theme),
+                    ),
+                ]));
+            }
+
+            // The SLO triad: TTFT is how long until something appears, TPOT is
+            // how fast it then streams. p95/p99 are what users actually feel.
+            for (name, p) in [("ttft", sv.ttft), ("tpot", sv.tpot)] {
+                let Some(p) = p else { continue };
+                if lines.len() + 1 >= cap {
+                    break;
+                }
+                // Scale the color by how far p95 drifts from p50: a long tail
+                // is the interesting signal, not the absolute number.
+                let spread = if p.p50 > 0.0 {
+                    ((p.p95 / p.p50 - 1.0) / 3.0).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {name:<6} "), dim(theme)),
+                    Span::styled(
+                        format!("p50 {:.0}ms", p.p50),
+                        Style::default().fg(theme.fg.color()),
+                    ),
+                    Span::styled(
+                        format!("  p95 {:.0}ms", p.p95),
+                        Style::default().fg(theme.grad(spread as f32)),
+                    ),
+                    Span::styled(format!("  p99 {:.0}ms", p.p99), dim(theme)),
+                ]));
             }
 
             // Trend sparklines (nvtop-style): tokens/sec against its own peak,

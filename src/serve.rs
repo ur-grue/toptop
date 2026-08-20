@@ -26,6 +26,7 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
     let shared = Arc::new(Mutex::new(String::from("# toptop: warming up\n")));
     let interval = Duration::from_millis(cfg.tick_ms.max(1000));
     let alert_cfg = cfg.alerts.clone();
+    let targets = cfg.llm_servers.clone();
 
     // Background sampler: owns the Collector, republishes rendered metrics.
     {
@@ -33,7 +34,7 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
         std::thread::Builder::new()
             .name("toptop-exporter".into())
             .spawn(move || {
-                let mut c = Collector::new(256);
+                let mut c = Collector::with_targets(256, targets);
                 loop {
                     c.refresh();
                     let text = export::to_prometheus(&c, &alert_cfg);

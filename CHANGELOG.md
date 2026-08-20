@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inference SLO triad** — TTFT *and* TPOT (time-per-output-token, the
+  inter-token latency users feel while a response streams) as p50/p95/p99,
+  derived by parsing the runtimes' Prometheus histogram buckets with linear
+  in-bucket interpolation, the same way `histogram_quantile` does. Shown per
+  server in the AI view and exported as
+  `toptop_inference_{ttft,tpot}_p{50,95,99}_ms`. A quantile landing in the
+  open-ended `+Inf` bucket reports the largest finite bound rather than
+  inventing a number. (#28)
+- **Prefill vs decode as a first-class split** — the AI view now shows the
+  phase mix (`prefill 34% · decode 66%`) and names the dominant phase. The two
+  phases have different bottlenecks — prefill is compute-bound, decode is
+  memory-bandwidth-bound — so the mix says which one you are paying for. (#29)
+- **SGLang metrics** — running/queued requests, KV (token-budget) usage, model
+  name, generation throughput and TTFT are now parsed from SGLang's Prometheus
+  endpoint; SGLang was detected as a runtime but showed no live numbers. (#9)
+- **`--llm-server <host:port>`** — scrape inference servers that
+  auto-discovery can't see: remote boxes, and macOS/Windows where the
+  `/proc`-based socket→PID mapping doesn't exist. Repeatable, also settable as
+  `llm_servers` in the config, IPv6 in bracket form. Manual targets are
+  labelled by address and get a longer scrape timeout than the localhost
+  sweep. (#13)
+
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
   Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus
   tokens/sec from its counters), the `mlc-llm` launcher spelling (base MLC

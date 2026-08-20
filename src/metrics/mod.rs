@@ -18,8 +18,8 @@ pub mod netconn;
 
 use crate::history::History;
 use gpu::{Gpu, GpuMonitor, GpuProc};
-use infer::InferenceMonitor;
-pub use infer::ServerStats;
+use infer::{InferenceMonitor, Target};
+pub use infer::{Percentiles, ServerStats};
 pub use netconn::Connection;
 
 /// Static-ish information about the host, captured once at startup.
@@ -179,6 +179,12 @@ pub struct ServerHistory {
 impl Collector {
     /// Build a collector and perform an initial population pass.
     pub fn new(history_len: usize) -> Self {
+        Self::with_targets(history_len, Vec::new())
+    }
+
+    /// Build a collector that also scrapes manually configured inference
+    /// servers (`--llm-server`) alongside auto-discovered ones.
+    pub fn with_targets(history_len: usize, targets: Vec<Target>) -> Self {
         let refresh_kind = RefreshKind::nothing()
             .with_cpu(CpuRefreshKind::everything())
             .with_memory(MemoryRefreshKind::everything());
@@ -232,7 +238,7 @@ impl Collector {
             refresh_kind,
             proc_refresh,
             gpu_monitor: GpuMonitor::new(),
-            infer_monitor: InferenceMonitor::new(),
+            infer_monitor: InferenceMonitor::with_targets(targets),
             prev_proc_io: std::collections::HashMap::new(),
             last_instant: None,
             last_battery_at: None,

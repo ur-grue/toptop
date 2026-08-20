@@ -167,13 +167,15 @@ pub struct App {
     pub demo: bool,
     demo_tick: u64,
     pub alert_cfg: AlertConfig,
+    /// Manual inference-server targets, kept for the config round-trip.
+    llm_servers: Vec<crate::metrics::infer::Target>,
     pub status: Option<(String, Instant)>,
 }
 
 impl App {
     pub fn new(cfg: &Config) -> Self {
         let history_len = 256;
-        let collector = Collector::new(history_len);
+        let collector = Collector::with_targets(history_len, cfg.llm_servers.clone());
         let mut app = Self {
             collector,
             theme_idx: cfg.theme_idx.min(THEMES.len() - 1),
@@ -206,6 +208,7 @@ impl App {
             demo: false,
             demo_tick: 0,
             alert_cfg: cfg.alerts.clone(),
+            llm_servers: cfg.llm_servers.clone(),
             status: None,
         };
         app.rebuild_proc_view();
@@ -228,6 +231,7 @@ impl App {
             per_core: self.per_core,
             layout: self.layout,
             alerts: self.alert_cfg.clone(),
+            llm_servers: self.llm_servers.clone(),
         }
     }
 

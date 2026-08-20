@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::alerts::AlertConfig;
 use crate::app::LayoutPreset;
+use crate::metrics::infer::{parse_target, Target};
 use crate::theme;
 
 /// User-tunable settings.
@@ -29,6 +30,9 @@ pub struct Config {
     pub layout: LayoutPreset,
     /// Alert thresholds (VRAM spill, KV-cache saturation, queue backlog).
     pub alerts: AlertConfig,
+    /// Manually configured inference-server targets (`--llm-server`), scraped
+    /// alongside auto-discovery.
+    pub llm_servers: Vec<Target>,
 }
 
 impl Default for Config {
@@ -40,6 +44,7 @@ impl Default for Config {
             per_core: true,
             layout: LayoutPreset::Full,
             alerts: AlertConfig::default(),
+            llm_servers: Vec::new(),
         }
     }
 }
@@ -98,6 +103,12 @@ impl Config {
                 "tree" => cfg.tree = parse_bool(value).unwrap_or(cfg.tree),
                 "per_core" => cfg.per_core = parse_bool(value).unwrap_or(cfg.per_core),
                 "layout" => cfg.layout = LayoutPreset::from_name(value).unwrap_or(cfg.layout),
+                "llm_servers" => {
+                    // Malformed entries are skipped like any other bad config
+                    // value; `--llm-server` reports them instead.
+                    cfg.llm_servers
+                        .extend(value.split(',').filter_map(|t| parse_target(t).ok()));
+                }
                 "alert_vram_pct" => {
                     if let Ok(v) = value.parse::<f32>() {
                         cfg.alerts.vram_spill_pct = v.clamp(1.0, 100.0);
@@ -203,6 +214,15 @@ mod tests {
         assert_eq!(cfg.alerts.vram_spill_pct, 100.0);
         assert_eq!(cfg.alerts.kv_high_pct, 1.0);
         assert_eq!(cfg.alerts.queue_high, AlertConfig::default().queue_high);
+    }
+
+    #[test]
+    fn parses_llm_server_targets() {
+        let cfg = Config::parse("llm_servers = gpu-box:8000, 10.0.0.5:11434, garbage\n");
+        // Malformed entries are dropped, valid ones kept, in order.
+        assert_eq!(cfg.llm_servers.len(), 2);
+        assert_eq!(cfg.llm_servers[0].host, "gpu-box");
+        assert_eq!(cfg.llm_servers[1].port, 11434);
     }
 
     #[test]
