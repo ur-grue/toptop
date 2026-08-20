@@ -78,6 +78,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `llm_servers` in the config, IPv6 in bracket form. Manual targets are
   labelled by address and get a longer scrape timeout than the localhost
   sweep. (#13)
+- **Richer process detail** — the `Enter` overlay now also lists the selected
+  process's **open files**, **network sockets** and **environment**, fetched
+  lazily for just that PID while the overlay is open and dropped as soon as it
+  closes. Each section is capped to its share of the panel and reports what it
+  elided (`… 37 more`), so an elided list never looks like a complete one. The
+  overlay now grows with the terminal instead of being a fixed 72×18 box.
+  Environment comes from sysinfo (all platforms); open files and sockets are
+  `/proc`-based and are simply empty elsewhere. (#44)
 
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
   Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus

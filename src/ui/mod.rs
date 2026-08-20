@@ -881,7 +881,11 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     let Some(p) = app.selected_proc() else {
         return;
     };
-    let rect = centered(area, 72, 18);
+    // Grow with the terminal: the base rows are fixed, the three detail
+    // sections take whatever is left.
+    let height = (area.height.saturating_sub(4)).clamp(18, 40);
+    let width = (area.width.saturating_sub(6)).clamp(60, 96);
+    let rect = centered(area, width, height);
     f.render_widget(Clear, rect);
     let block = panel(
         &format!("process · {} ({})", truncate(&p.name, 28), p.pid),
@@ -969,12 +973,112 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             theme.fg.color(),
         ),
         row("Command", truncate(&p.cmd, wrap), theme.dim.color()),
-        Line::from(Span::styled(
-            "Enter / Esc to close · K to signal",
-            dim(theme),
-        )),
     ];
+    let mut lines = lines;
+
+    // Open files, sockets and environment — fetched only while this overlay is
+    // open. Each section is capped and reports what it elided, so a process
+    // with 4000 descriptors doesn't push everything else off the panel.
+    if let Some(d) = &app.detail {
+        let budget = (inner.height as usize).saturating_sub(lines.len() + 2);
+        let per_section = (budget / 3).max(1);
+
+        let files: Vec<&crate::metrics::OpenFile> =
+            d.open_files.iter().filter(|f| !f.is_pseudo()).collect();
+        section(
+            &mut lines,
+            theme,
+            &format!("Open files ({})", d.open_files.len()),
+            files.len(),
+            per_section,
+            files.iter().take(per_section).map(|f| {
+                Line::from(vec![
+                    Span::styled(format!("  {:>4}  ", f.fd), dim(theme)),
+                    Span::styled(
+                        truncate(&f.target, wrap),
+                        Style::default().fg(theme.fg.color()),
+                    ),
+                ])
+            }),
+        );
+
+        section(
+            &mut lines,
+            theme,
+            &format!("Sockets ({})", d.connections.len()),
+            d.connections.len(),
+            per_section,
+            d.connections.iter().take(per_section).map(|c| {
+                Line::from(vec![
+                    Span::styled(format!("  {:<5} ", c.proto), dim(theme)),
+                    Span::styled(
+                        format!("{:<22}", truncate(&c.local, 22)),
+                        Style::default().fg(theme.accent2.color()),
+                    ),
+                    Span::styled(
+                        format!("{:<22}", truncate(&c.remote, 22)),
+                        Style::default().fg(theme.fg.color()),
+                    ),
+                    Span::styled(c.state, dim(theme)),
+                ])
+            }),
+        );
+
+        section(
+            &mut lines,
+            theme,
+            &format!("Environment ({})", d.env.len()),
+            d.env.len(),
+            per_section,
+            d.env.iter().take(per_section).map(|(k, v)| {
+                Line::from(vec![
+                    Span::styled(
+                        format!("  {k}="),
+                        Style::default().fg(theme.accent2.color()),
+                    ),
+                    Span::styled(truncate(v, wrap.saturating_sub(k.len())), dim(theme)),
+                ])
+            }),
+        );
+    }
+
+    lines.push(Line::from(Span::styled(
+        "Enter / Esc to close · K to signal",
+        dim(theme),
+    )));
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Append a titled detail section, or a dimmed "none" line when it is empty.
+/// `total` vs `shown` drives the "+N more" note, so an elided list never looks
+/// like a complete one.
+fn section<'a>(
+    lines: &mut Vec<Line<'a>>,
+    theme: &Theme,
+    title: &str,
+    total: usize,
+    cap: usize,
+    rows: impl Iterator<Item = Line<'a>>,
+) {
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        Style::default()
+            .fg(theme.accent.color())
+            .add_modifier(Modifier::BOLD),
+    )));
+    let mut shown = 0;
+    for row in rows {
+        lines.push(row);
+        shown += 1;
+    }
+    if shown == 0 {
+        lines.push(Line::from(Span::styled("  —", dim(theme))));
+    } else if total > cap {
+        lines.push(Line::from(Span::styled(
+            format!("  … {} more", total - cap),
+            dim(theme),
+        )));
+    }
 }
 
 fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app: &App) {

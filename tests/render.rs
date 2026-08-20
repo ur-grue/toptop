@@ -305,6 +305,23 @@ fn interaction_flow_is_stable() {
     app.on_key(key(KeyCode::Esc));
     assert!(!app.show_alert_history, "Esc peels the overlay back");
 
+    // Detail overlay: fetches open files/env/sockets for the selection and
+    // renders at both a roomy and a cramped size.
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.show_detail);
+    assert!(
+        app.detail.is_some(),
+        "detail is fetched as the overlay opens"
+    );
+    render_at(&mut app, 120, 40);
+    render_at(&mut app, 62, 16); // cramped: sections must not overflow
+    app.on_key(key(KeyCode::Enter));
+    assert!(!app.show_detail);
+    assert!(
+        app.detail.is_none(),
+        "detail is dropped when the overlay closes"
+    );
+
     // Filter entry typing path.
     app.on_key(key(KeyCode::Char('/')));
     for c in "kernel".chars() {

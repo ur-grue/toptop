@@ -647,6 +647,51 @@ impl Collector {
         }
     }
 
+    /// Everything the detail overlay needs beyond the process row, fetched on
+    /// demand for one PID rather than cached for every row of the table.
+    ///
+    /// Each part degrades independently: environment comes from sysinfo (all
+    /// platforms), open files from `/proc/<pid>/fd` (Linux only), and sockets
+    /// are the global connection scan narrowed to this PID (Linux only). An
+    /// unreadable part yields an empty list, never an error — you routinely
+    /// lack permission for other users' processes.
+    pub fn proc_detail(&mut self, pid: u32) -> ProcDetail {
+        ProcDetail {
+            env: self.proc_env(pid),
+            open_files: proc_open_files(pid),
+            connections: self
+                .connections()
+                .into_iter()
+                .filter(|c| c.pid == Some(pid))
+                .collect(),
+        }
+    }
+
+    /// Read one process's environment, refreshing just that PID for it —
+    /// environments are large and change rarely, so they are deliberately not
+    /// part of the per-tick refresh.
+    fn proc_env(&mut self, pid: u32) -> Vec<(String, String)> {
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+            false,
+            ProcessRefreshKind::nothing().with_environ(UpdateKind::Always),
+        );
+        let Some(proc) = self.sys.process(Pid::from_u32(pid)) else {
+            return Vec::new();
+        };
+        let mut env: Vec<(String, String)> = proc
+            .environ()
+            .iter()
+            .filter_map(|e| {
+                let e = e.to_string_lossy();
+                let (k, v) = e.split_once('=')?;
+                Some((k.to_string(), v.to_string()))
+            })
+            .collect();
+        env.sort_by(|a, b| a.0.cmp(&b.0));
+        env
+    }
+
     /// Resolve the executable path and working directory for a single process,
     /// fetched on demand for the detail overlay rather than cached per row.
     pub fn proc_paths(&self, pid: u32) -> (String, String) {
@@ -695,6 +740,62 @@ fn raw_signal(sig: Signal) -> Option<i32> {
         .iter()
         .find(|(_, _, s)| *s == sig)
         .map(|(_, num, _)| *num)
+}
+
+/// One entry of `/proc/<pid>/fd`: the descriptor number and what it points at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenFile {
+    pub fd: u32,
+    /// Link target: a path, or a pseudo-target like `socket:[12345]`.
+    pub target: String,
+}
+
+impl OpenFile {
+    /// Whether this descriptor is a socket rather than a file on disk — those
+    /// are listed under connections instead, with their addresses resolved.
+    pub fn is_socket(&self) -> bool {
+        self.target.starts_with("socket:")
+    }
+
+    /// Whether this is a pipe, event fd or similar kernel pseudo-file.
+    pub fn is_pseudo(&self) -> bool {
+        self.target.starts_with("pipe:")
+            || self.target.starts_with("anon_inode:")
+            || self.is_socket()
+    }
+}
+
+/// On-demand detail for one process, backing the detail overlay.
+#[derive(Clone, Debug, Default)]
+pub struct ProcDetail {
+    /// Environment, sorted by key.
+    pub env: Vec<(String, String)>,
+    /// Open file descriptors, sorted by fd.
+    pub open_files: Vec<OpenFile>,
+    /// This process's network connections.
+    pub connections: Vec<Connection>,
+}
+
+/// Read `/proc/<pid>/fd` — Linux only; anywhere else this yields nothing.
+fn proc_open_files(pid: u32) -> Vec<OpenFile> {
+    let Ok(dir) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<OpenFile> = dir
+        .flatten()
+        .filter_map(|entry| {
+            let fd: u32 = entry.file_name().to_str()?.parse().ok()?;
+            // A descriptor can close between listing and reading it; skip it
+            // rather than showing a phantom entry.
+            let target = std::fs::read_link(entry.path()).ok()?;
+            Some(OpenFile {
+                fd,
+                target: target.to_string_lossy().to_string(),
+            })
+        })
+        .collect();
+    out.sort_by_key(|f| f.fd);
+    out
 }
 
 /// Outcome of attempting to deliver a signal to a process.
@@ -792,6 +893,33 @@ fn status_char(status: ProcessStatus) -> char {
 
 #[cfg(test)]
 mod tests {
+    use super::{OpenFile, ProcDetail};
+
+    #[test]
+    fn open_file_classification() {
+        let sock = OpenFile {
+            fd: 7,
+            target: "socket:[12345]".into(),
+        };
+        assert!(sock.is_socket() && sock.is_pseudo());
+        let pipe = OpenFile {
+            fd: 3,
+            target: "pipe:[999]".into(),
+        };
+        assert!(!pipe.is_socket() && pipe.is_pseudo());
+        let file = OpenFile {
+            fd: 4,
+            target: "/var/log/app.log".into(),
+        };
+        assert!(!file.is_socket() && !file.is_pseudo());
+    }
+
+    #[test]
+    fn proc_detail_defaults_are_empty() {
+        let d = ProcDetail::default();
+        assert!(d.env.is_empty() && d.open_files.is_empty() && d.connections.is_empty());
+    }
+
     use super::*;
 
     fn fake_gpu(util: f32, mem_util: f32, used: u64, total: u64) -> gpu::Gpu {
