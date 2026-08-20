@@ -1270,7 +1270,13 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                     format!("  [{}] ", a.level.label()),
                     Style::default().fg(theme.grad(if hot { 1.0 } else { 0.7 })),
                 ),
-                Span::styled(a.message.clone(), Style::default().fg(theme.fg.color())),
+                // Truncate with an ellipsis rather than letting the panel
+                // border clip mid-word — a cut-off alert reads as a rendering
+                // bug on top of whatever it was warning about.
+                Span::styled(
+                    truncate(&a.message, (inner.width as usize).saturating_sub(9)),
+                    Style::default().fg(theme.fg.color()),
+                ),
             ]));
         }
         lines.push(Line::from(Span::raw("")));
@@ -1388,7 +1394,14 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
         // of a faster GPU core will help.
         if let Some(h) = c.gpu_history.get(i) {
             let graph_h = 4usize;
-            if h.compute.len() >= 2 && bw >= 12 && lines.len() + graph_h + 1 < inner.height as usize
+            // A GPU that reports no utilization at all (Apple Silicon, most
+            // integrated GPUs) would otherwise get a "trend" heading over four
+            // permanently blank rows.
+            let has_signal = h.compute.max() > 0.0 || h.bandwidth.max() > 0.0;
+            if has_signal
+                && h.compute.len() >= 2
+                && bw >= 12
+                && lines.len() + graph_h + 1 < inner.height as usize
             {
                 lines.push(Line::from(vec![
                     Span::styled(format!("  {:<10}", "trend"), dim(theme)),
@@ -1547,7 +1560,10 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 stat.push(Span::styled(format!("  ttft {:.0}ms", t), dim(theme)));
             }
             if stat.len() > 1 {
-                lines.push(Line::from(stat));
+                // The stats are a variable-length list of facts; on a narrow
+                // panel they used to be clipped mid-word at the border, which
+                // silently hid whichever fact came last — including preemption.
+                lines.extend(wrap_spans(stat, inner.width as usize, "  "));
             }
 
             // Prefill vs decode as a first-class split: the two phases have
@@ -1768,6 +1784,29 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
     let target = block.inner(rect);
     f.render_widget(block, rect);
     f.render_widget(Paragraph::new(Text::from(lines)), target);
+}
+
+/// Pack `spans` into lines of at most `width` cells, indenting continuations
+/// with `indent`. Splits only between spans — each one is a self-contained
+/// fact, and half a fact is worse than a wrapped one.
+fn wrap_spans<'a>(spans: Vec<Span<'a>>, width: usize, indent: &'a str) -> Vec<Line<'a>> {
+    let mut lines = Vec::new();
+    let mut current: Vec<Span<'a>> = Vec::new();
+    let mut used = 0usize;
+    for span in spans {
+        let len = span.content.chars().count();
+        if used + len > width && !current.is_empty() {
+            lines.push(Line::from(std::mem::take(&mut current)));
+            current.push(Span::raw(indent));
+            used = indent.chars().count();
+        }
+        used += len;
+        current.push(span);
+    }
+    if !current.is_empty() {
+        lines.push(Line::from(current));
+    }
+    lines
 }
 
 /// Whether a rendered line carries no visible text.

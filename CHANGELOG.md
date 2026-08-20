@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The AI view no longer clips facts at the panel border.** The per-server
+  stat line is a variable-length list, and whatever came last — usually the
+  preemption rate, the most actionable number on it — was silently cut off.
+  It now wraps between facts, never through one. Alert messages truncate with
+  an ellipsis instead of being cut mid-word by the border.
+- **No "trend" heading over blank rows.** A GPU that reports no utilization
+  (Apple Silicon, most integrated GPUs) drew the compute-vs-bandwidth heading
+  above four permanently empty rows.
+
 - **Unified-memory GPUs no longer render as `vram 0 B / 0 B`.** Apple Silicon
   reports no discrete VRAM total, which the small GPU panel drew as a
   zero-byte reading — indistinguishable from a broken driver. It now says
