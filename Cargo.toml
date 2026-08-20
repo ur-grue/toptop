@@ -2,7 +2,7 @@
 name = "toptop"
 version = "1.0.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "A gorgeous, feature-rich terminal system monitor — an htop/btop alternative with high-resolution braille graphs, truecolor gradient meters, an interactive process table, and switchable themes."
 license = "GPL-3.0-or-later"
 readme = "README.md"

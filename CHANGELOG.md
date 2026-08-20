@@ -24,11 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The advertised MSRV was wrong.** `Cargo.toml` and the README promised Rust
-  1.82, but ratatui 0.30 pulls in `ratatui-termina`, which requires
-  `edition2024` and therefore Rust 1.85+. Anyone on 1.82–1.84 got a confusing
-  Cargo manifest error instead of a clear "too old" message. The advertised
-  MSRV is now 1.85, and the new MSRV job — which is what caught this — keeps it
-  honest. (#18)
+  1.82, but ratatui 0.30 needs far more than that: its manifest requires
+  `edition2024` (Rust 1.85+) and `ratatui-core` declares `rust-version 1.88`.
+  Anyone on 1.82–1.87 following the README got a confusing Cargo error instead
+  of a clear "your toolchain is too old". The advertised MSRV is now **1.88**,
+  six releases from what was claimed, and the new MSRV job — which is what
+  caught this — keeps it honest from here on. (#18)
 
 ### Changed
 
