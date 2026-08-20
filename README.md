@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-126%20green-success)
+![Tests](https://img.shields.io/badge/tests-138%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -322,7 +322,8 @@ toptop [OPTIONS]
 
 OPTIONS:
     -t, --tick <MS>      Refresh interval in milliseconds (100‑60000)
-        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk, paper)
+        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk,
+                         paper, or a user theme from ~/.config/toptop/themes/<name>.conf)
         --tree           Start in process‑tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local‑LLM GPU view on launch
@@ -442,6 +443,63 @@ alert_vram_pct = 85   # VRAM % that triggers the spill-risk alert (default 90)
 alert_kv_pct = 90     # KV-cache % considered saturated (default 95)
 alert_queue = 4       # queued requests considered a backlog (default 8)
 ```
+
+### Process-table columns
+
+`columns` chooses which columns the process table shows, in order — drop the ones
+you never read, put `command` first, whatever fits your terminal:
+
+```ini
+columns = pid, cpu, mem%, vram, command
+```
+
+Available: `pid` · `user` · `cpu` · `mem%` · `mem` · `disk` · `vram` · `time` ·
+`state` · `command`. Unknown names are ignored; the header, the rows and
+click‑to‑sort all follow the configured set.
+
+### Keybindings
+
+Every main-view action can be remapped with a `bind_<action>` line. A binding
+replaces the built-in key for that action, and takes a comma-separated list:
+
+```ini
+bind_quit = ctrl+x
+bind_tree = ctrl+t
+bind_up = up, w
+bind_down = down, s
+```
+
+Actions: `quit` · `help` · `pause` · `detail` · `up` · `down` · `page_up` ·
+`page_down` · `first` · `last` · `sort_next` · `sort_invert` · `tree` ·
+`per_core` · `layout` · `connections` · `ai` · `theme_next` · `theme_prev` ·
+`tick_up` · `tick_down` · `filter` · `kill` · `renice` · `sigterm` · `sigkill`.
+
+Key names: single characters (case-sensitive, so `p` and `P` differ), `up`,
+`down`, `left`, `right`, `pgup`, `pgdn`, `home`, `end`, `enter`, `tab`, `space`,
+`backspace`, `delete`, `insert`, `f1`–`f12`, each optionally prefixed with
+`ctrl+` or `alt+`. Unknown keys are reported on stderr and keep the default;
+binding a key that another action already uses moves it (last line wins).
+`Esc` and `Ctrl-C` stay fixed — they are the way out of every overlay.
+
+### User themes
+
+Drop a `.conf` file into `~/.config/toptop/themes/` and its file name becomes a
+theme name for `--theme` and the `p` cycle. `base` picks the built-in every
+unset key falls back to, so a file only states what it changes:
+
+```ini
+# ~/.config/toptop/themes/midnight.conf
+base = nord
+accent = #ff2e97
+accent2 = #00f0ff
+bg = #0d061a          # or `none` to keep the terminal background
+gradient = #00f0ff, #7b61ff, #ff2e97, #ff295a
+```
+
+Keys: `fg` · `bg` · `dim` · `accent` · `accent2` · `border` · `border_focus` ·
+`mem` · `swap` · `net_down` · `net_up` · `disk_read` · `disk_write` ·
+`selection` · `gradient`. Colors are `#rrggbb`. A broken file warns on stderr
+and is skipped — toptop always starts. `--list-themes` marks user themes.
 
 ## 🤝 Contributing
 

@@ -9,7 +9,8 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, ProcColumn};
+use crate::metrics::ProcInfo;
 use crate::theme::Theme;
 use crate::util::{
     clamp_pct, compact_duration, human_bytes, human_duration, human_rate, short_bytes, truncate,
@@ -700,18 +701,13 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         height: rows_cap as u16,
     };
 
-    let header = Row::new(vec![
-        Cell::from("PID"),
-        Cell::from("USER"),
-        Cell::from("CPU%"),
-        Cell::from("MEM%"),
-        Cell::from("MEM"),
-        Cell::from("DISK"),
-        Cell::from("VRAM"),
-        Cell::from("TIME"),
-        Cell::from("S"),
-        Cell::from("COMMAND"),
-    ])
+    let columns = app.columns.clone();
+    let header = Row::new(
+        columns
+            .iter()
+            .map(|c| Cell::from(c.header()))
+            .collect::<Vec<_>>(),
+    )
     .style(
         Style::default()
             .fg(theme.accent.color())
@@ -728,41 +724,12 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
             p.cmd.clone()
         };
         let cpu = clamp_pct(p.cpu);
-        let row = Row::new(vec![
-            Cell::from(format!("{:>7}", p.pid)),
-            Cell::from(truncate(&p.user, 9)),
-            Cell::from(Span::styled(
-                format!("{:>5.1}", p.cpu.min(999.0)),
-                Style::default().fg(theme.grad(cpu / 100.0)),
-            )),
-            Cell::from(Span::styled(
-                format!("{:>5.1}", p.mem_pct),
-                Style::default().fg(theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0))),
-            )),
-            Cell::from(short_bytes(p.mem_bytes)),
-            Cell::from({
-                let io = p.io_read_rate + p.io_write_rate;
-                if io >= 1.0 {
-                    Span::styled(
-                        format!("{}/s", short_bytes(io as u64)),
-                        Style::default().fg(theme.disk_write.color()),
-                    )
-                } else {
-                    Span::styled("·", dim(theme))
-                }
-            }),
-            Cell::from(if p.gpu_mem > 0 {
-                Span::styled(
-                    short_bytes(p.gpu_mem),
-                    Style::default().fg(theme.accent2.color()),
-                )
-            } else {
-                Span::styled("·", dim(theme))
-            }),
-            Cell::from(compact_duration(p.run_time)),
-            Cell::from(p.status.to_string()),
-            Cell::from(cmd),
-        ]);
+        let row = Row::new(
+            columns
+                .iter()
+                .map(|c| proc_cell(*c, p, &cmd, cpu, theme))
+                .collect::<Vec<_>>(),
+        );
         let row = if selected {
             row.style(
                 Style::default()
@@ -776,20 +743,55 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         rows.push(row);
     }
 
-    let widths = [
-        Constraint::Length(7),
-        Constraint::Length(9),
-        Constraint::Length(5),
-        Constraint::Length(5),
-        Constraint::Length(7),
-        Constraint::Length(8),
-        Constraint::Length(7),
-        Constraint::Length(7),
-        Constraint::Length(1),
-        Constraint::Min(10),
-    ];
+    let widths: Vec<Constraint> = columns
+        .iter()
+        .map(|c| match c.width() {
+            Some(w) => Constraint::Length(w),
+            None => Constraint::Min(10),
+        })
+        .collect();
     let table = Table::new(rows, widths).header(header).column_spacing(1);
     f.render_widget(table, inner);
+}
+
+/// Render one process-table cell. `cmd` is the (possibly tree-indented) command
+/// and `cpu` the clamped CPU percentage, both computed once per row.
+fn proc_cell<'a>(col: ProcColumn, p: &'a ProcInfo, cmd: &str, cpu: f32, theme: &Theme) -> Cell<'a> {
+    match col {
+        ProcColumn::Pid => Cell::from(format!("{:>7}", p.pid)),
+        ProcColumn::User => Cell::from(truncate(&p.user, 9)),
+        ProcColumn::Cpu => Cell::from(Span::styled(
+            format!("{:>5.1}", p.cpu.min(999.0)),
+            Style::default().fg(theme.grad(cpu / 100.0)),
+        )),
+        ProcColumn::MemPct => Cell::from(Span::styled(
+            format!("{:>5.1}", p.mem_pct),
+            Style::default().fg(theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0))),
+        )),
+        ProcColumn::Mem => Cell::from(short_bytes(p.mem_bytes)),
+        ProcColumn::Disk => Cell::from({
+            let io = p.io_read_rate + p.io_write_rate;
+            if io >= 1.0 {
+                Span::styled(
+                    format!("{}/s", short_bytes(io as u64)),
+                    Style::default().fg(theme.disk_write.color()),
+                )
+            } else {
+                Span::styled("·", dim(theme))
+            }
+        }),
+        ProcColumn::Vram => Cell::from(if p.gpu_mem > 0 {
+            Span::styled(
+                short_bytes(p.gpu_mem),
+                Style::default().fg(theme.accent2.color()),
+            )
+        } else {
+            Span::styled("·", dim(theme))
+        }),
+        ProcColumn::Time => Cell::from(compact_duration(p.run_time)),
+        ProcColumn::State => Cell::from(p.status.to_string()),
+        ProcColumn::Command => Cell::from(cmd.to_string()),
+    }
 }
 
 // ── Footer ───────────────────────────────────────────────────────────────────

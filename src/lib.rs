@@ -9,6 +9,7 @@ pub mod export;
 pub mod fleet;
 pub mod history;
 pub mod json;
+pub mod keys;
 pub mod metrics;
 pub mod serve;
 pub mod theme;
