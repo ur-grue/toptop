@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **cgroup v2 awareness** — inside a container, the CPU panel now shows the
+  cgroup's own quota (`⧉ limit 2.00 cores`) and flags kernel throttling
+  (`⏱ throttled`), and the memory panel adds the cgroup's usage against its
+  limit. Every other terminal monitor reports the host's cores and memory
+  there, so a pod limited to 2 cores on a 64-core node reads "3% CPU" while it
+  is pinned and being throttled. Outside a container nothing is added. (#36)
+- **Group processes by container / Kubernetes pod** — `C` groups the process
+  table by container, adding a `CONTAINER` column and ordering by CPU within
+  each group. Docker, containerd/CRI and systemd-managed Kubernetes pod slices
+  are recognized, with pod UIDs shortened to something readable. Resolution is
+  off until you ask for it (it is a `/proc/<pid>/cgroup` read per process) and
+  cached per PID afterwards, since a process cannot change cgroup during its
+  lifetime — so the hot path is unaffected. (#37)
+
 ### Changed
 
 - **The process table drops columns on narrow terminals** instead of squeezing

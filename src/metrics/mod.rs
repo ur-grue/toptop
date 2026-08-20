@@ -12,6 +12,7 @@ use sysinfo::{
 };
 
 pub mod ai;
+pub mod cgroup;
 pub mod gpu;
 pub mod infer;
 pub mod netconn;
@@ -108,6 +109,10 @@ pub struct ProcInfo {
     pub gpu_mem: u64,
     /// Indentation depth when rendered as a tree (0 when flat).
     pub depth: usize,
+    /// Container or Kubernetes pod this process belongs to, resolved only
+    /// while the group-by-container view is on (see
+    /// `Collector::resolve_containers`).
+    pub container: Option<String>,
 }
 
 /// A temperature sensor reading.
@@ -143,6 +148,14 @@ pub struct Collector {
     last_instant: Option<Instant>,
     last_battery_at: Option<Instant>,
     history_len: usize,
+    /// Whether to resolve each process's container. Off by default: it is a
+    /// `/proc/<pid>/cgroup` read per process, which is exactly the sort of
+    /// per-row syscall the hot-path guard exists to catch.
+    pub resolve_containers: bool,
+    /// Cache of resolved container labels. A process cannot change cgroup
+    /// during its lifetime, so this is exact rather than a staleness tradeoff;
+    /// entries are dropped when the PID goes away.
+    container_cache: std::collections::HashMap<u32, Option<String>>,
 
     pub host: HostInfo,
     pub cpu: CpuData,
@@ -171,6 +184,10 @@ pub struct Collector {
     /// sparklines; pruned when a server disappears.
     pub server_history: std::collections::HashMap<(u32, u16), ServerHistory>,
     pub battery: Option<Battery>,
+    /// cgroup v2 limits, when this process runs in a limited cgroup. Present
+    /// means the host's CPU count and memory total do not describe what this
+    /// process is allowed to use.
+    pub cgroup: Option<cgroup::Cgroup>,
     pub uptime: u64,
 }
 
@@ -265,6 +282,9 @@ impl Collector {
             proc_refresh,
             gpu_monitor: GpuMonitor::new(),
             gpu_history: Vec::new(),
+            cgroup: cgroup::current(),
+            resolve_containers: false,
+            container_cache: std::collections::HashMap::new(),
             infer_monitor: InferenceMonitor::with_targets(targets),
             prev_proc_io: std::collections::HashMap::new(),
             last_instant: None,
@@ -337,6 +357,9 @@ impl Collector {
                 p.gpu_mem = vram.get(&p.pid).copied().unwrap_or(0);
             }
         }
+        // Limits change when a container is resized, and the throttling
+        // counters move every tick — both are a handful of small reads.
+        self.cgroup = cgroup::current();
         self.update_gpu_history();
         self.servers = self.infer_monitor.snapshot();
         self.update_server_history();
@@ -589,7 +612,23 @@ impl Collector {
                 threads: proc_.tasks().map(|t| t.len()).unwrap_or(0),
                 gpu_mem: 0,
                 depth: 0,
+                container: None,
             });
+        }
+        // Container labels, only when the grouping view asked for them. The
+        // cache means one /proc read per process ever, not per tick.
+        if self.resolve_containers {
+            self.container_cache
+                .retain(|pid, _| io_now.contains_key(pid));
+            for p in &mut procs {
+                let label = self
+                    .container_cache
+                    .entry(p.pid)
+                    .or_insert_with(|| cgroup::container_of(p.pid));
+                p.container = label.clone();
+            }
+        } else if !self.container_cache.is_empty() {
+            self.container_cache.clear();
         }
         self.procs = procs;
         self.prev_proc_io = io_now;
