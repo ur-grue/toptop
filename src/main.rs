@@ -33,7 +33,8 @@ USAGE:
 
 OPTIONS:
     -t, --tick <MS>      Refresh interval in milliseconds (100-60000)
-        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk, paper)
+        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk,
+                         paper, or a user theme from ~/.config/toptop/themes/<name>.conf)
         --tree           Start in process-tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local-LLM GPU view on launch
@@ -47,9 +48,15 @@ OPTIONS:
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default), 'csv', or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus endpoint (default 127.0.0.1:9709)
+        --llm-server <H:P>   Scrape an inference server at host:port (repeatable;
+                             bypasses localhost auto-discovery)
         --alert-vram <PCT>   VRAM % that triggers the spill-risk alert (default 90)
         --alert-kv <PCT>     KV-cache % considered saturated (default 95)
         --alert-queue <N>    Queued requests considered a backlog (default 8)
+        --alert-cmd <CMD>    Shell command run on every alert fire/resolve
+                             (TOPTOP_ALERT_{STATE,SEVERITY,KEY,DETAIL,MSG} in its env)
+        --alert-preempt <R>  KV-cache preemptions/sec that trigger a critical alert
+                             (default 0.2 — preemption throws away completed work)
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -183,6 +190,12 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                 };
                 opts.serve_addr = Some(addr);
             }
+            "--llm-server" => {
+                let spec = args.next().ok_or("--llm-server requires host:port")?;
+                opts.cfg
+                    .llm_servers
+                    .push(toptop::metrics::infer::parse_target(spec)?);
+            }
             "--alert-vram" => {
                 let v = args
                     .next()
@@ -198,6 +211,21 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                     .parse::<f64>()
                     .map_err(|_| "--alert-kv value must be a number")?;
                 opts.cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
+            }
+            "--alert-cmd" => {
+                opts.cfg.notify.cmd = Some(
+                    args.next()
+                        .ok_or("--alert-cmd requires a shell command")?
+                        .clone(),
+                );
+            }
+            "--alert-preempt" => {
+                let v = args
+                    .next()
+                    .ok_or("--alert-preempt requires a rate (preemptions/second)")?
+                    .parse::<f64>()
+                    .map_err(|_| "--alert-preempt value must be a number")?;
+                opts.cfg.alerts.preempt_rate_high = v.max(0.0);
             }
             "--alert-queue" => {
                 let v = args
@@ -252,11 +280,20 @@ fn arg_error(msg: &str) -> ! {
 fn main() -> Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
+    // User themes must be registered before the config file is read — it
+    // resolves `theme = <name>` against the registry.
+    for warning in theme::init_user_themes(theme::user_theme_dir().as_deref()) {
+        eprintln!("toptop: {warning}");
+    }
+
     let config_path = config_path_arg(&argv).unwrap_or_else(|e| arg_error(&e));
     let cfg = match &config_path {
         Some(path) => Config::load_path(path),
         None => Config::load(),
     };
+    for warning in &cfg.warnings {
+        eprintln!("toptop: {warning}");
+    }
     let opts = parse_args(&argv, cfg).unwrap_or_else(|e| arg_error(&e));
 
     match opts.action {
@@ -269,8 +306,13 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Action::ListThemes => {
-            for t in theme::THEMES {
-                println!("{}", t.name);
+            let builtin = theme::BUILTINS.len();
+            for (i, t) in theme::themes().iter().enumerate() {
+                if i < builtin {
+                    println!("{}", t.name);
+                } else {
+                    println!("{}  (user)", t.name);
+                }
             }
             return Ok(());
         }
@@ -585,6 +627,28 @@ mod tests {
     fn tick_errors() {
         assert!(parse(&["--tick"]).unwrap_err().contains("requires"));
         assert!(parse(&["--tick", "abc"]).unwrap_err().contains("integer"));
+    }
+
+    #[test]
+    fn alert_cmd_flag() {
+        let o = parse(&["--alert-cmd", "notify-send $TOPTOP_ALERT_MSG"]).unwrap();
+        assert_eq!(
+            o.cfg.notify.cmd.as_deref(),
+            Some("notify-send $TOPTOP_ALERT_MSG")
+        );
+        assert!(parse(&["--alert-cmd"]).unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn llm_server_targets_are_repeatable_and_validated() {
+        let o = parse(&["--llm-server", "gpu-box:8000", "--llm-server", "[::1]:9000"]).unwrap();
+        assert_eq!(o.cfg.llm_servers.len(), 2);
+        assert_eq!(o.cfg.llm_servers[0].host, "gpu-box");
+        assert_eq!(o.cfg.llm_servers[1].host, "::1");
+        assert!(parse(&["--llm-server", "nope"])
+            .unwrap_err()
+            .contains("host:port"));
+        assert!(parse(&["--llm-server"]).unwrap_err().contains("requires"));
     }
 
     #[test]

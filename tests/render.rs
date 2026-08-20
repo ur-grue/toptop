@@ -148,7 +148,20 @@ fn ai_view_renders() {
         waiting: Some(5.0),
         kv_pct: Some(64.0),
         ttft_ms: Some(180.0),
+        ttft: Some(toptop::metrics::Percentiles {
+            p50: 180.0,
+            p95: 520.0,
+            p99: 910.0,
+        }),
+        tpot: Some(toptop::metrics::Percentiles {
+            p50: 12.0,
+            p95: 28.0,
+            p99: 47.0,
+        }),
         gpu_offload_pct: None,
+        addr: None,
+        preemptions: Some(12.0),
+        preempt_rate: Some(1.2),
     }];
     render_at(&mut app, 100, 30);
     render_at(&mut app, 60, 14); // cramped
@@ -230,16 +243,22 @@ fn connections_collect_without_panic() {
 
 #[test]
 fn header_sort_mapping() {
-    use toptop::app::{header_sort_at, SortField};
-    assert_eq!(header_sort_at(0), Some(SortField::Pid));
-    assert_eq!(header_sort_at(10), Some(SortField::User));
-    assert_eq!(header_sort_at(20), Some(SortField::Cpu));
-    assert_eq!(header_sort_at(26), Some(SortField::Mem));
-    assert_eq!(header_sort_at(40), Some(SortField::Io));
-    assert_eq!(header_sort_at(50), Some(SortField::Gpu));
-    assert_eq!(header_sort_at(58), Some(SortField::Time));
-    assert_eq!(header_sort_at(63), None);
-    assert_eq!(header_sort_at(70), Some(SortField::Name));
+    use toptop::app::{header_sort_at, SortField, DEFAULT_COLUMNS as C};
+    assert_eq!(header_sort_at(C, 0), Some(SortField::Pid));
+    assert_eq!(header_sort_at(C, 10), Some(SortField::User));
+    assert_eq!(header_sort_at(C, 20), Some(SortField::Cpu));
+    assert_eq!(header_sort_at(C, 26), Some(SortField::Mem));
+    assert_eq!(header_sort_at(C, 40), Some(SortField::Io));
+    assert_eq!(header_sort_at(C, 50), Some(SortField::Gpu));
+    assert_eq!(header_sort_at(C, 58), Some(SortField::Time));
+    assert_eq!(header_sort_at(C, 63), None);
+    assert_eq!(header_sort_at(C, 70), Some(SortField::Name));
+
+    // A custom column set remaps the ranges: pid(7+1) then command takes the rest.
+    use toptop::app::ProcColumn;
+    let custom = &[ProcColumn::Pid, ProcColumn::Command];
+    assert_eq!(header_sort_at(custom, 0), Some(SortField::Pid));
+    assert_eq!(header_sort_at(custom, 9), Some(SortField::Name));
 }
 
 #[test]
@@ -265,6 +284,44 @@ fn interaction_flow_is_stable() {
         render_at(&mut app, 120, 40);
     }
 
+    // Alert-history overlay: empty, then with transitions in it.
+    app.on_key(key(KeyCode::Char('A')));
+    assert!(app.show_alert_history);
+    render_at(&mut app, 120, 40);
+    {
+        use std::time::Instant;
+        use toptop::alerts::{Alert, Level};
+        let a = vec![Alert {
+            level: Level::Crit,
+            key: "gpu_throttle",
+            detail: "gpu0".into(),
+            message: "gpu0 is throttling (TestGPU)".into(),
+        }];
+        let now = Instant::now();
+        app.tracker.update(&a, now);
+        app.tracker.update(&[], now);
+    }
+    render_at(&mut app, 120, 40);
+    app.on_key(key(KeyCode::Esc));
+    assert!(!app.show_alert_history, "Esc peels the overlay back");
+
+    // Detail overlay: fetches open files/env/sockets for the selection and
+    // renders at both a roomy and a cramped size.
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.show_detail);
+    assert!(
+        app.detail.is_some(),
+        "detail is fetched as the overlay opens"
+    );
+    render_at(&mut app, 120, 40);
+    render_at(&mut app, 62, 16); // cramped: sections must not overflow
+    app.on_key(key(KeyCode::Enter));
+    assert!(!app.show_detail);
+    assert!(
+        app.detail.is_none(),
+        "detail is dropped when the overlay closes"
+    );
+
     // Filter entry typing path.
     app.on_key(key(KeyCode::Char('/')));
     for c in "kernel".chars() {
@@ -276,7 +333,7 @@ fn interaction_flow_is_stable() {
     assert!(app.filter.is_empty());
 
     // Cycle through every theme and re-render.
-    for _ in 0..toptop::theme::THEMES.len() + 1 {
+    for _ in 0..toptop::theme::themes().len() + 1 {
         app.on_key(key(KeyCode::Char('p')));
         render_at(&mut app, 120, 40);
     }

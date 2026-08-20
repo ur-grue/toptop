@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-125%20green-success)
+![Tests](https://img.shields.io/badge/tests-162%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -132,6 +132,9 @@ sensors, battery, seven themes — all in a single **~1 MB binary with zero runt
 | ☠️ **Signal menu** | send any of nine signals (`SIGTERM`…`SIGUSR2`) behind a confirmation prompt; the status line distinguishes **delivered** from **permission denied** (signalling another user's process needs `sudo`) and **already‑exited**, so a failed signal explains itself instead of silently doing nothing |
 | 🌐 **Network + connections** | per‑interface rx/tx braille graph; a live TCP/UDP table mapping sockets → process (`n`) |
 | 🗄️ **Disk + sensors** | per‑mount usage, read/write I/O graph, temperatures, battery |
+| 📊 **Inference SLO triad** | TTFT and TPOT p50/p95/p99 from vLLM/TGI/TensorRT-LLM/SGLang histograms, plus the prefill-vs-decode phase mix |
+| ⟲ **KV-cache preemption** | The signal no other tool shows: requests thrown away and recomputed because the cache ran out — a critical alert, not a footnote |
+| 📉 **Compute vs bandwidth over time** | A mirrored braille graph per GPU: compute above the line, memory bandwidth below. The divergence *is* the diagnosis |
 | ⏺️ **Flight recorder** | `--record` writes JSONL snapshots per tick; `--replay` scrubs them in the full TUI on any machine |
 | 🎨 **Seven themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk` · `paper` (light terminals); `full`/`cpu`/`process` presets |
 | 🪶 **Tiny & safe** | ~1 MB binary, zero runtime deps, adaptive 250‑col→tiny layout, restores your terminal even on panic |
@@ -322,7 +325,8 @@ toptop [OPTIONS]
 
 OPTIONS:
     -t, --tick <MS>      Refresh interval in milliseconds (100‑60000)
-        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk, paper)
+        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk,
+                         paper, or a user theme from ~/.config/toptop/themes/<name>.conf)
         --tree           Start in process‑tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local‑LLM GPU view on launch
@@ -337,6 +341,10 @@ OPTIONS:
         --alert-vram <PCT>   VRAM % that triggers the spill‑risk alert (default 90)
         --alert-kv <PCT>     KV‑cache % considered saturated (default 95)
         --alert-queue <N>    Queued requests considered a backlog (default 8)
+        --alert-preempt <R>  KV-cache preemptions/sec that trigger a critical alert
+                             (default 0.2 — preemption throws away completed work)
+        --alert-cmd <CMD>    Shell command run on every alert fire/resolve
+                             (TOPTOP_ALERT_{STATE,SEVERITY,KEY,DETAIL,MSG} in its env)
     -h, --help           Show help
     -V, --version        Show version
 ```
@@ -351,6 +359,8 @@ OPTIONS:
 | `Enter` | process detail view | `n` | network connections |
 | `s` | cycle sort column | `L` | cycle layout preset |
 | `i` | invert sort order | `p` / `P` | next / previous theme |
+| `A` | alert history timeline | | |
+| `Enter` | process detail (open files · sockets · env) | | |
 | click header | sort by column | `+` / `-` | faster / slower refresh |
 | `/` | filter processes | `space` | pause / resume |
 | `K` / `F9` | signal menu | `?` / `F1` | help overlay |
@@ -413,6 +423,56 @@ cp completions/_toptop ~/.zfunc/                  # zsh  (ensure ~/.zfunc is on 
 cp completions/toptop.fish ~/.config/fish/completions/   # fish
 ```
 
+### KV-cache preemption — the metric nothing else surfaces
+
+When a serving runtime runs out of KV cache, it **preempts** in-flight
+requests: the work already done on them is thrown away and recomputed later.
+Throughput collapses, latency spikes — and every dashboard still shows a busy,
+healthy-looking GPU. `nvidia-smi` cannot see it, and neither can any other
+terminal monitor.
+
+toptop scrapes the counter, differences it into a rate, and treats a sustained
+nonzero rate as **critical** — above a queue backlog, because a backlog only
+delays work while preemption destroys work already done:
+
+```
+  vLLM:8000  Llama-3-8B
+    83.4 tok/s  prefill 1200/s  kv 99%  req 4/12  ⟲ preempt 1.8/s
+```
+
+Tune with `alert_preempt = 0.5` or `--alert-preempt 0.5`; exported as
+`toptop_inference_preemptions_{total,per_second}`.
+
+### Compute vs memory bandwidth, over time
+
+Token generation is memory-bandwidth-bound once the model is resident. toptop
+draws both as one mirrored braille graph per GPU — compute above the midline,
+bandwidth below:
+
+```
+  trend      compute ▲  /  ▼ bandwidth
+             ⢀⣀⣠⣤⣶⣶⣤⣄⣀⡀⢀⣀⣠⣤⣶
+             ⠉⠛⠿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+```
+
+Bandwidth pinned while compute idles means you are memory-bound and a faster
+GPU core will not help you. That divergence is the whole diagnosis, and it is
+only visible over time.
+
+### Remote and non-Linux inference servers
+
+Auto-discovery walks `/proc` to map listening sockets to runtime processes, so
+it is localhost- and Linux-only. `--llm-server` bypasses it entirely:
+
+```bash
+toptop --llm-server gpu-box:8000 --llm-server 10.0.0.5:11434
+toptop --ai --llm-server '[::1]:8000'      # bracket IPv6 literals
+```
+
+Repeatable, and settable as `llm_servers = gpu-box:8000, 10.0.0.5:11434` in the
+config. Manual targets are scraped with the same parsers as discovered ones and
+labelled by their address (they have no local PID). This is also how macOS and
+Windows users get inference metrics today.
 ## ⏺️ Record & replay
 
 "The GPU throttled ten minutes ago — what happened?" toptop keeps 256 in-memory
@@ -451,6 +511,103 @@ alert_vram_pct = 85   # VRAM % that triggers the spill-risk alert (default 90)
 alert_kv_pct = 90     # KV-cache % considered saturated (default 95)
 alert_queue = 4       # queued requests considered a backlog (default 8)
 ```
+
+### Alert actions and sinks
+
+Alerts render in the TUI and export as Prometheus gauges. On an unattended box
+you want toptop to *do* something when one fires — and again when it clears:
+
+```ini
+alert_cmd = notify-send "$TOPTOP_ALERT_MSG"      # any shell command
+alert_webhook = http://localhost:9000/hook       # generic JSON POST
+alert_ntfy = https://ntfy.sh/my-gpu-box          # ntfy topic
+alert_slack = https://hooks.slack.com/services/… # Slack incoming webhook
+alert_flap_secs = 60                             # flap-suppression window
+```
+
+`alert_cmd` (also `--alert-cmd <CMD>`) runs on every fire **and** resolve with
+the alert in its environment: `TOPTOP_ALERT_STATE` (`fired`/`resolved`),
+`TOPTOP_ALERT_SEVERITY` (`warn`/`crit`), `TOPTOP_ALERT_KEY`,
+`TOPTOP_ALERT_DETAIL`, `TOPTOP_ALERT_MSG`. Its output goes to `/dev/null` — the
+TUI owns the terminal — and it runs detached, so a slow hook never stalls a
+refresh.
+
+The three built-in sinks POST for you. Delivery is fire-and-forget on a
+background thread, and works the same in `--serve-metrics` mode, which is where
+unattended alerting actually matters.
+
+> **Note:** the sinks shell out to `curl`, because Slack and ntfy.sh are
+> HTTPS-only and toptop carries no TLS stack. The binary stays dependency-free;
+> `curl` is only needed if you configure a sink.
+
+**Flap suppression:** an alert that re-fires within `alert_flap_secs` (default
+60) of its last announcement is tracked but not re-announced — and its matching
+resolve is suppressed too, so you never get a "resolved" with no "fired". A
+throttling GPU crossing its threshold every two seconds costs you one
+notification, not thirty.
+
+### Alert history
+
+Press `A` for a timeline of recent fire/resolve transitions with relative ages
+and a count of how many flaps were suppressed. The banner tells you what is
+wrong *now*; this tells you what happened while you were away.
+
+### Process-table columns
+
+`columns` chooses which columns the process table shows, in order — drop the ones
+you never read, put `command` first, whatever fits your terminal:
+
+```ini
+columns = pid, cpu, mem%, vram, command
+```
+
+Available: `pid` · `user` · `cpu` · `mem%` · `mem` · `disk` · `vram` · `time` ·
+`state` · `command`. Unknown names are ignored; the header, the rows and
+click‑to‑sort all follow the configured set.
+
+### Keybindings
+
+Every main-view action can be remapped with a `bind_<action>` line. A binding
+replaces the built-in key for that action, and takes a comma-separated list:
+
+```ini
+bind_quit = ctrl+x
+bind_tree = ctrl+t
+bind_up = up, w
+bind_down = down, s
+```
+
+Actions: `quit` · `help` · `pause` · `detail` · `up` · `down` · `page_up` ·
+`page_down` · `first` · `last` · `sort_next` · `sort_invert` · `tree` ·
+`per_core` · `layout` · `connections` · `ai` · `theme_next` · `theme_prev` ·
+`tick_up` · `tick_down` · `filter` · `kill` · `renice` · `sigterm` · `sigkill`.
+
+Key names: single characters (case-sensitive, so `p` and `P` differ), `up`,
+`down`, `left`, `right`, `pgup`, `pgdn`, `home`, `end`, `enter`, `tab`, `space`,
+`backspace`, `delete`, `insert`, `f1`–`f12`, each optionally prefixed with
+`ctrl+` or `alt+`. Unknown keys are reported on stderr and keep the default;
+binding a key that another action already uses moves it (last line wins).
+`Esc` and `Ctrl-C` stay fixed — they are the way out of every overlay.
+
+### User themes
+
+Drop a `.conf` file into `~/.config/toptop/themes/` and its file name becomes a
+theme name for `--theme` and the `p` cycle. `base` picks the built-in every
+unset key falls back to, so a file only states what it changes:
+
+```ini
+# ~/.config/toptop/themes/midnight.conf
+base = nord
+accent = #ff2e97
+accent2 = #00f0ff
+bg = #0d061a          # or `none` to keep the terminal background
+gradient = #00f0ff, #7b61ff, #ff2e97, #ff295a
+```
+
+Keys: `fg` · `bg` · `dim` · `accent` · `accent2` · `border` · `border_focus` ·
+`mem` · `swap` · `net_down` · `net_up` · `disk_read` · `disk_write` ·
+`selection` · `gradient`. Colors are `#rrggbb`. A broken file warns on stderr
+and is skipped — toptop always starts. `--list-themes` marks user themes.
 
 ## 🤝 Contributing
 

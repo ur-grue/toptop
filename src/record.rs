@@ -162,6 +162,14 @@ pub fn parse_frame(line: &str) -> Option<Frame> {
                 kv_pct: s.num("kv_pct"),
                 ttft_ms: s.num("ttft_ms"),
                 gpu_offload_pct: s.num("gpu_offload_pct"),
+                preemptions: s.num("preemptions"),
+                preempt_rate: s.num("preempt_rate"),
+                // The JSON export carries neither the latency histograms nor
+                // the manual-target address, so a replayed server has neither
+                // rather than a fabricated one.
+                ttft: None,
+                tpot: None,
+                addr: None,
             })
             .collect();
     }
