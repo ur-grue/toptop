@@ -48,6 +48,8 @@ OPTIONS:
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default), 'csv', or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus endpoint (default 127.0.0.1:9709)
+        --otlp <URL>     Push OpenTelemetry metrics to a collector
+                         (e.g. http://localhost:4318; plain http only)
         --llm-server <H:P>   Scrape an inference server at host:port (repeatable;
                              bypasses localhost auto-discovery)
         --alert-vram <PCT>   VRAM % that triggers the spill-risk alert (default 90)
@@ -88,6 +90,7 @@ struct Opts {
     remote_hosts: Vec<String>,
     remote_cmd: String,
     serve_addr: Option<String>,
+    otlp_endpoint: Option<String>,
     action: Action,
 }
 
@@ -123,6 +126,7 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
         remote_hosts: Vec::new(),
         remote_cmd: "toptop --export json".to_string(),
         serve_addr: None,
+        otlp_endpoint: None,
         action: Action::Run,
     };
 
@@ -195,6 +199,13 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                 opts.cfg
                     .llm_servers
                     .push(toptop::metrics::infer::parse_target(spec)?);
+            }
+            "--otlp" => {
+                let url = args.next().ok_or("--otlp requires an endpoint URL")?;
+                // Validate now so a typo fails at startup, not silently every
+                // tick from a background loop.
+                toptop::otlp::parse_endpoint(url)?;
+                opts.otlp_endpoint = Some(url.clone());
             }
             "--alert-vram" => {
                 let v = args
@@ -332,11 +343,16 @@ fn main() -> Result<()> {
         remote_hosts,
         remote_cmd,
         serve_addr,
+        otlp_endpoint,
         ..
     } = opts;
 
     if let Some(format) = export {
         return run_export(&cfg, format);
+    }
+
+    if let Some(url) = otlp_endpoint {
+        return toptop::otlp::run(&url, &cfg).context("OTLP export failed");
     }
 
     if let Some(addr) = serve_addr {
@@ -649,6 +665,20 @@ mod tests {
             .unwrap_err()
             .contains("host:port"));
         assert!(parse(&["--llm-server"]).unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn otlp_endpoint_flag_is_validated_at_startup() {
+        let o = parse(&["--otlp", "http://localhost:4318"]).unwrap();
+        assert_eq!(o.otlp_endpoint.as_deref(), Some("http://localhost:4318"));
+        // A typo must fail here, not silently in a background loop every tick.
+        assert!(parse(&["--otlp", "localhost:4318"])
+            .unwrap_err()
+            .contains("http://"));
+        assert!(parse(&["--otlp", "https://c:4318"])
+            .unwrap_err()
+            .contains("TLS"));
+        assert!(parse(&["--otlp"]).unwrap_err().contains("requires"));
     }
 
     #[test]

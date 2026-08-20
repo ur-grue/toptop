@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   off until you ask for it (it is a `/proc/<pid>/cgroup` read per process) and
   cached per PID afterwards, since a process cannot change cgroup during its
   lifetime — so the hot path is unaffected. (#37)
+- **OpenTelemetry export** — `--otlp http://localhost:4318` pushes OTLP/HTTP
+  JSON to a collector every tick, complementing the pull-based
+  `--serve-metrics`. `system.*`, `gpu.*` and `inference.*` gauges carry the
+  runtime, model and GPU as attributes. Payload construction is a pure function
+  and is validated in tests by parsing it back. A collector that is down is
+  reported once and then counted rather than spamming stderr, and recovery is
+  reported too. Plain `http://` only — an `https://` endpoint is refused at
+  startup with an explanation, since toptop carries no TLS stack and OTLP
+  collectors are near-universally local. (#38)
 
 ### Changed
 
