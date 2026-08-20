@@ -2,7 +2,7 @@
 name = "toptop"
 version = "1.0.1"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.88"
 description = "A gorgeous, feature-rich terminal system monitor — an htop/btop alternative with high-resolution braille graphs, truecolor gradient meters, an interactive process table, and switchable themes."
 license = "GPL-3.0-or-later"
 readme = "README.md"
@@ -51,6 +51,13 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # process API instead — see src/metrics/mod.rs.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# Hot-path regression guard (see benches/hot_path.rs). No criterion: the guard
+# is about catching algorithmic regressions on noisy CI runners, which needs
+# generous budgets rather than statistics — and the project carries no
+# dependencies it doesn't need.
+[[bench]]
+name = "hot_path"
+harness = false
 
 [profile.release]
 opt-level = 3

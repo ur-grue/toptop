@@ -610,3 +610,31 @@ fn duplicate_mounts_are_deduplicated() {
         );
     }
 }
+
+/// AI-workload detection is cached per tick, not redone per frame — the
+/// difference was 7x on the AI view's render time. Guard the lifecycle so a
+/// refactor can't quietly move it back into the render path.
+#[test]
+fn ai_workloads_are_cached_per_tick() {
+    let mut app = App::new(&Config::default());
+    app.on_tick();
+    assert!(
+        app.ai_workloads.is_empty(),
+        "nothing is detected while the AI view is closed"
+    );
+
+    app.on_key(key(KeyCode::Char('a')));
+    assert!(app.show_ai);
+    // Opening the view populates immediately rather than one tick later.
+    let detected = app.ai_workloads.len();
+    app.on_tick();
+    assert_eq!(app.ai_workloads.len(), detected, "stable across ticks");
+    render_at(&mut app, 120, 40);
+
+    app.on_key(key(KeyCode::Char('a')));
+    assert!(!app.show_ai);
+    assert!(
+        app.ai_workloads.is_empty(),
+        "closing the view drops the cache"
+    );
+}

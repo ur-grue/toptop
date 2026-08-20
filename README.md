@@ -10,11 +10,11 @@
 with a gorgeous full system monitor underneath. Rust · one tiny binary · zero deps.**
 
 [![CI](https://github.com/ur-grue/toptop/actions/workflows/ci.yml/badge.svg)](https://github.com/ur-grue/toptop/actions/workflows/ci.yml)
-[![Rust](https://img.shields.io/badge/rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-166%20green-success)
+![Tests](https://img.shields.io/badge/tests-167%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -278,7 +278,7 @@ and keep retrying. No agent, no daemon, no open ports — just SSH and the singl
 
 ## 🚀 Install
 
-**From source** (requires a Rust toolchain, 1.82+):
+**From source** (requires a Rust toolchain, 1.88+):
 
 ```bash
 git clone https://github.com/ur-grue/toptop && cd toptop

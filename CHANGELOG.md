@@ -125,6 +125,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/proc`-based connections inspector and inference-server discovery stay
   Linux-only but now explain themselves instead of rendering an empty panel —
   on macOS too. Native Windows equivalents remain open. (#45, partial)
+- **CI hardening** — the workflow now also runs a `macos-latest` build+test job
+  (the README advertises macOS as verified; this keeps it true), an MSRV job
+  pinned to the advertised Rust 1.82, and `cargo audit` over the dependency
+  tree. (#18)
+- **Hot-path regression guard** — `cargo bench` measures a metrics refresh, a
+  process-view rebuild (flat and tree) and a full render frame (normal and AI
+  view), printing the numbers and failing only when one blows a deliberately
+  generous budget. Shared CI runners are far too noisy for percent-level
+  thresholds; ~10x budgets still catch the regressions that matter — an
+  accidental O(n²) over the process list, a per-row syscall, an unthrottled
+  file read. Wired into CI. (#46)
+
+### Fixed
+
+- **The advertised MSRV was wrong.** `Cargo.toml` and the README promised Rust
+  1.82, but ratatui 0.30 needs far more than that: its manifest requires
+  `edition2024` (Rust 1.85+) and `ratatui-core` declares `rust-version 1.88`.
+  Anyone on 1.82–1.87 following the README got a confusing Cargo error instead
+  of a clear "your toolchain is too old". The advertised MSRV is now **1.88**,
+  six releases from what was claimed, and the new MSRV job — which is what
+  caught this — keeps it honest from here on. (#18)
+
+### Changed
+
+- **AI view renders ~7x faster** — the first finding of the new guard. AI
+  workload detection lowercases and scans every process's full command line
+  against ~40 runtime needles, and it was running on *every rendered frame*
+  (5.2 ms per frame with 500 processes). It is now computed once per tick, only
+  while the AI view is open, and dropped when it closes: 5.2 ms → 0.7 ms.
 
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
   Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus

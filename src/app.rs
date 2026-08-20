@@ -224,6 +224,17 @@ pub const NICE_LEVELS: &[(&str, i32)] = &[
     ("19  lowest", 19),
 ];
 
+/// One detected local-AI process, joined to its CPU/RAM and (where the PID
+/// matches a GPU compute process) its VRAM.
+#[derive(Clone, Debug)]
+pub struct AiWorkload {
+    pub runtime: crate::metrics::ai::Runtime,
+    pub pid: u32,
+    pub cpu: f32,
+    pub mem_bytes: u64,
+    pub vram: u64,
+}
+
 /// A pending destructive action awaiting confirmation.
 #[derive(Clone)]
 pub struct PendingKill {
@@ -274,6 +285,10 @@ pub struct App {
     pub detail: Option<ProcDetail>,
     /// Whether the AI/LLM GPU view is shown.
     pub show_ai: bool,
+    /// Detected AI workloads, recomputed once per tick while the AI view is
+    /// open. Detection scans every process's command line against the runtime
+    /// table, which is far too expensive to redo on every rendered frame.
+    pub ai_workloads: Vec<AiWorkload>,
     /// Whether the network-connections view is shown.
     pub show_conn: bool,
     /// Latest connection snapshot (refreshed while the view is open).
@@ -336,6 +351,7 @@ impl App {
             show_detail: false,
             detail: None,
             show_ai: false,
+            ai_workloads: Vec::new(),
             show_conn: false,
             connections: Vec::new(),
             conn_offset: 0,
@@ -419,6 +435,7 @@ impl App {
             self.refresh_connections();
         }
         self.refresh_detail();
+        self.refresh_ai_workloads();
         self.expire_status();
     }
 
@@ -434,6 +451,43 @@ impl App {
             Some(pid) => self.detail = Some(self.collector.proc_detail(pid)),
             None => self.detail = None,
         }
+    }
+
+    /// Re-detect AI workloads while the AI view is open, and drop them when it
+    /// closes. Detection lowercases and scans each process's full command line
+    /// against ~40 runtime needles — a few milliseconds across a busy process
+    /// table, which is fine once per tick and absurd once per frame.
+    fn refresh_ai_workloads(&mut self) {
+        if !self.show_ai {
+            self.ai_workloads.clear();
+            return;
+        }
+        let c = &self.collector;
+        let mut out: Vec<AiWorkload> = c
+            .procs
+            .iter()
+            .filter_map(|p| {
+                let runtime = crate::metrics::ai::detect_runtime(&p.name, &p.cmd)?;
+                Some(AiWorkload {
+                    runtime,
+                    pid: p.pid,
+                    cpu: p.cpu,
+                    mem_bytes: p.mem_bytes,
+                    vram: c
+                        .gpu_procs
+                        .iter()
+                        .find(|gp| gp.pid == p.pid)
+                        .map(|gp| gp.used_mem)
+                        .unwrap_or(0),
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            b.cpu
+                .partial_cmp(&a.cpu)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        self.ai_workloads = out;
     }
 
     /// Re-snapshot network connections and clamp the scroll offset.
@@ -919,7 +973,11 @@ impl App {
                 self.conn_offset = 0;
                 self.refresh_connections();
             }
-            Some(Action::Ai) => self.show_ai = !self.show_ai,
+            Some(Action::Ai) => {
+                self.show_ai = !self.show_ai;
+                // Populate immediately so the view is never empty for a tick.
+                self.refresh_ai_workloads();
+            }
             Some(Action::AlertHistory) => self.show_alert_history = !self.show_alert_history,
             Some(Action::ThemeNext) => self.cycle_theme(true),
             Some(Action::ThemePrev) => self.cycle_theme(false),
