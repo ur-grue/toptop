@@ -295,6 +295,25 @@ fn render_cpu(f: &mut Frame, area: Rect, app: &App) {
             dim(theme),
         ),
     ]);
+    // In a limited cgroup the host core count is not what this process may
+    // use, and "3% CPU" on a throttled container is actively misleading.
+    let mut summary = summary;
+    if let Some(cg) = &app.collector.cgroup {
+        if let Some(limit) = cg.cpu_limit {
+            summary.spans.push(Span::styled(
+                format!("  ⧉ limit {limit:.2} cores"),
+                Style::default().fg(theme.accent2.color()),
+            ));
+        }
+        if cg.nr_throttled.is_some_and(|n| n > 0) {
+            summary.spans.push(Span::styled(
+                "  ⏱ throttled",
+                Style::default()
+                    .fg(theme.grad(1.0))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    }
 
     let parts = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(inner);
     f.render_widget(Paragraph::new(summary), parts[0]);
@@ -392,6 +411,26 @@ fn render_mem(f: &mut Frame, area: Rect, app: &App) {
         ),
     ]));
     lines.push(Line::from(graph::meter_spans(ram_pct, mw, theme)));
+    // The container's own limit, which is what actually OOM-kills it.
+    if let Some(cg) = &app.collector.cgroup {
+        if let (Some(limit), Some(used)) = (cg.mem_limit, cg.mem_used) {
+            let pct = cg.mem_pct().unwrap_or(0.0) as f32;
+            lines.push(Line::from(vec![
+                Span::styled("⧉   ", dim(theme)),
+                Span::styled(
+                    format!("{pct:>5.1}%"),
+                    Style::default()
+                        .fg(theme.grad(pct / 100.0))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  {} / {} cgroup", human_bytes(used), human_bytes(limit)),
+                    Style::default().fg(theme.accent2.color()),
+                ),
+            ]));
+            lines.push(Line::from(graph::meter_spans(pct, mw, theme)));
+        }
+    }
     lines.push(Line::from(vec![
         Span::styled("swp ", dim(theme)),
         Span::styled(
@@ -845,6 +884,11 @@ fn proc_cell<'a>(col: ProcColumn, p: &'a ProcInfo, cmd: &str, cpu: f32, theme: &
         }),
         ProcColumn::Time => Cell::from(compact_duration(p.run_time)),
         ProcColumn::State => Cell::from(p.status.to_string()),
+        ProcColumn::Container => Cell::from(match &p.container {
+            Some(c) => Span::styled(truncate(c, 14), Style::default().fg(theme.accent2.color())),
+            // A process outside any container, which is information too.
+            None => Span::styled("·", dim(theme)),
+        }),
         ProcColumn::Command => Cell::from(cmd.to_string()),
     }
 }
@@ -926,6 +970,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
     for (k, d) in [
         ("?", "help"),
         ("a", "ai"),
+        ("C", "group"),
         ("Enter", "detail"),
         ("n", "net"),
         ("s", "sort"),
@@ -2017,6 +2062,7 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("t", "toggle process tree"),
         ("e", "toggle per-core CPU meters"),
         ("a", "AI / local-LLM GPU view"),
+        ("C", "group by container / pod"),
         ("A", "alert history timeline"),
         ("n", "network connections"),
         ("L", "cycle layout preset"),

@@ -28,6 +28,7 @@ pub enum SortField {
     Time,
     Io,
     Gpu,
+    Container,
 }
 
 impl SortField {
@@ -41,6 +42,7 @@ impl SortField {
             SortField::Time => "TIME",
             SortField::Io => "DISK",
             SortField::Gpu => "VRAM",
+            SortField::Container => "CONTAINER",
         }
     }
 
@@ -54,7 +56,8 @@ impl SortField {
             SortField::User => SortField::Time,
             SortField::Time => SortField::Io,
             SortField::Io => SortField::Gpu,
-            SortField::Gpu => SortField::Cpu,
+            SortField::Gpu => SortField::Container,
+            SortField::Container => SortField::Cpu,
         }
     }
 }
@@ -74,6 +77,7 @@ pub enum ProcColumn {
     Vram,
     Time,
     State,
+    Container,
     Command,
 }
 
@@ -104,6 +108,7 @@ impl ProcColumn {
             ProcColumn::Vram => "vram",
             ProcColumn::Time => "time",
             ProcColumn::State => "state",
+            ProcColumn::Container => "container",
             ProcColumn::Command => "command",
         }
     }
@@ -120,6 +125,7 @@ impl ProcColumn {
             ProcColumn::Vram => "VRAM",
             ProcColumn::Time => "TIME",
             ProcColumn::State => "S",
+            ProcColumn::Container => "CONTAINER",
             ProcColumn::Command => "COMMAND",
         }
     }
@@ -133,6 +139,7 @@ impl ProcColumn {
             ProcColumn::Mem | ProcColumn::Vram | ProcColumn::Time => Some(7),
             ProcColumn::Disk => Some(8),
             ProcColumn::State => Some(1),
+            ProcColumn::Container => Some(14),
             ProcColumn::Command => None,
         }
     }
@@ -148,6 +155,8 @@ impl ProcColumn {
             ProcColumn::MemPct => 2,
             ProcColumn::Mem => 3,
             ProcColumn::State => 4,
+            // Only shown while grouping, where it is the point of the view.
+            ProcColumn::Container => 1,
             ProcColumn::Vram => 5,
             ProcColumn::Disk => 6,
             ProcColumn::Time => 7,
@@ -167,6 +176,7 @@ impl ProcColumn {
             ProcColumn::Time => Some(SortField::Time),
             ProcColumn::Command => Some(SortField::Name),
             ProcColumn::State => None,
+            ProcColumn::Container => Some(SortField::Container),
         }
     }
 
@@ -181,6 +191,7 @@ impl ProcColumn {
             "vram" | "gpu" => Some(ProcColumn::Vram),
             "time" => Some(ProcColumn::Time),
             "state" | "s" => Some(ProcColumn::State),
+            "container" | "pod" => Some(ProcColumn::Container),
             "command" | "cmd" => Some(ProcColumn::Command),
             _ => None,
         }
@@ -307,6 +318,8 @@ pub struct App {
 
     pub sort: SortField,
     pub sort_desc: bool,
+    /// Group the process table by container / Kubernetes pod.
+    pub group_container: bool,
     /// Process-table columns, in display order (from the config).
     pub columns: Vec<ProcColumn>,
     /// The subset actually drawn at the current width, captured at render time
@@ -389,6 +402,7 @@ impl App {
             layout: cfg.layout,
             sort: SortField::Cpu,
             sort_desc: true,
+            group_container: false,
             columns: cfg.columns.clone(),
             visible_columns: cfg.columns.clone(),
             keys: cfg.keys.clone(),
@@ -507,6 +521,41 @@ impl App {
         }
     }
 
+    /// Toggle grouping the process table by container / Kubernetes pod.
+    ///
+    /// Turning it on asks the collector to resolve container labels (off by
+    /// default, since that is a `/proc` read per process), switches the sort
+    /// to group by them, and shows the container column. Turning it off undoes
+    /// all three rather than leaving an empty column behind.
+    fn toggle_container_grouping(&mut self) {
+        self.group_container = !self.group_container;
+        self.collector.resolve_containers = self.group_container;
+        if self.group_container {
+            self.sort = SortField::Container;
+            self.sort_desc = false; // group names read better ascending
+            if !self.columns.contains(&ProcColumn::Container) {
+                // Next to the command, where the grouping is legible.
+                let at = self
+                    .columns
+                    .iter()
+                    .position(|c| *c == ProcColumn::Command)
+                    .unwrap_or(self.columns.len());
+                self.columns.insert(at, ProcColumn::Container);
+            }
+            self.set_status("Grouped by container · C to ungroup");
+        } else {
+            self.columns.retain(|c| *c != ProcColumn::Container);
+            self.sort = SortField::Cpu;
+            self.sort_desc = true;
+            for p in &mut self.collector.procs {
+                p.container = None;
+            }
+            self.set_status("Ungrouped");
+        }
+        // Labels are resolved on the next refresh; re-sort with what we have.
+        self.rebuild_proc_view();
+    }
+
     /// Re-detect AI workloads while the AI view is open, and drop them when it
     /// closes. Detection lowercases and scans each process's full command line
     /// against ~40 runtime needles — a few milliseconds across a busy process
@@ -609,6 +658,18 @@ impl App {
                     .partial_cmp(&b.cpu)
                     .unwrap_or(std::cmp::Ordering::Equal),
                 SortField::Mem => a.mem_bytes.cmp(&b.mem_bytes),
+                // Group by container, and order by CPU within each group —
+                // grouping is only useful if the rows inside are ranked.
+                SortField::Container => a
+                    .container
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.container.as_deref().unwrap_or(""))
+                    .then_with(|| {
+                        a.cpu
+                            .partial_cmp(&b.cpu)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    }),
                 SortField::Pid => a.pid.cmp(&b.pid),
                 SortField::Name => a
                     .name
@@ -657,6 +718,16 @@ impl App {
                         .partial_cmp(&pb.cpu)
                         .unwrap_or(std::cmp::Ordering::Equal),
                     SortField::Mem => pa.mem_bytes.cmp(&pb.mem_bytes),
+                    SortField::Container => pa
+                        .container
+                        .as_deref()
+                        .unwrap_or("")
+                        .cmp(pb.container.as_deref().unwrap_or(""))
+                        .then_with(|| {
+                            pa.cpu
+                                .partial_cmp(&pb.cpu)
+                                .unwrap_or(std::cmp::Ordering::Equal)
+                        }),
                     SortField::Pid => pa.pid.cmp(&pb.pid),
                     SortField::Name => pa
                         .name
@@ -1010,6 +1081,7 @@ impl App {
                 self.sort_desc = !self.sort_desc;
                 self.rebuild_proc_view();
             }
+            Some(Action::GroupContainer) => self.toggle_container_grouping(),
             Some(Action::Tree) => {
                 self.tree = !self.tree;
                 self.set_status(if self.tree { "Tree view" } else { "Flat view" });
@@ -1143,6 +1215,7 @@ mod tests {
             threads: 1,
             gpu_mem: 0,
             depth: 0,
+            container: None,
         }
     }
 
@@ -1177,6 +1250,59 @@ mod tests {
         app.on_key(key(KeyCode::Char('i')));
         assert!(!app.sort_desc);
         assert_eq!(pids(&app), vec![1, 3, 2]);
+    }
+
+    #[test]
+    fn container_grouping_toggles_cleanly() {
+        let mut app = App::new(&Config::default());
+        let columns_before = app.columns.clone();
+        assert!(
+            !app.collector.resolve_containers,
+            "off by default: it costs a /proc read per process"
+        );
+
+        app.toggle_container_grouping();
+        assert!(app.group_container);
+        assert!(app.collector.resolve_containers);
+        assert_eq!(app.sort, SortField::Container);
+        assert!(!app.sort_desc, "group names read better ascending");
+        assert!(app.columns.contains(&ProcColumn::Container));
+        // Inserted before COMMAND, not appended after it.
+        let ci = app.columns.iter().position(|c| *c == ProcColumn::Container);
+        let cmd = app.columns.iter().position(|c| *c == ProcColumn::Command);
+        assert!(ci < cmd, "container column belongs beside the command");
+
+        app.toggle_container_grouping();
+        assert!(!app.group_container);
+        assert!(!app.collector.resolve_containers);
+        assert_eq!(app.sort, SortField::Cpu);
+        assert_eq!(
+            app.columns, columns_before,
+            "ungrouping must not leave an empty column behind"
+        );
+    }
+
+    #[test]
+    fn container_sort_groups_then_ranks_within_the_group() {
+        let mut app = App::new(&Config::default());
+        let mut rows = vec![
+            proc(1, None, "a", 10.0, 0),
+            proc(2, None, "b", 90.0, 0),
+            proc(3, None, "c", 50.0, 0),
+        ];
+        rows[0].container = Some("web".into());
+        rows[1].container = None;
+        rows[2].container = Some("web".into());
+
+        app.sort = SortField::Container;
+        app.sort_desc = false;
+        app.sort_rows(&mut rows);
+
+        // Uncontained first (empty label sorts first), then the group, ordered
+        // by CPU within it — grouping is only useful if the rows are ranked.
+        assert_eq!(rows[0].pid, 2);
+        assert_eq!(rows[1].pid, 1, "10% CPU before 50% ascending");
+        assert_eq!(rows[2].pid, 3);
     }
 
     #[test]
