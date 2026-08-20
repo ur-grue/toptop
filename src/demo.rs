@@ -55,6 +55,12 @@ pub fn apply(c: &mut Collector, t: u64) {
         })
         .collect();
 
+    // `refresh` already sampled the *real* GPU into the history — which on a
+    // demo machine reports nothing. Replace that sample rather than adding
+    // one, or the trend would interleave an idle host card with the synthetic
+    // 4090 and draw a comb.
+    c.update_gpu_history_with(true);
+
     c.servers = vec![ServerStats {
         runtime: "vLLM",
         pid: by_cpu.first().map(|p| p.0).unwrap_or(1),
@@ -93,6 +99,29 @@ pub fn apply(c: &mut Collector, t: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gpu_trend_reflects_the_demo_not_the_host() {
+        let mut c = Collector::new(64);
+        for t in 1..=10 {
+            // Mimic App::on_tick: the real sample first, then the overlay.
+            c.update_gpu_history_with(false);
+            apply(&mut c, t);
+        }
+        let h = &c.gpu_history[0];
+        let compute = h.compute.tail(10);
+        assert_eq!(compute.len(), 10);
+        // Appending instead of replacing would interleave the host's idle card
+        // with the synthetic 4090 and draw a comb, which is what this guards.
+        assert!(
+            compute.iter().all(|v| *v > 0.0),
+            "the trend picked up the host GPU: {compute:?}"
+        );
+        assert!(
+            h.bandwidth.tail(10).iter().all(|v| *v > 50.0),
+            "the demo is bandwidth-heavy by design"
+        );
+    }
 
     #[test]
     fn wave_stays_in_bounds() {

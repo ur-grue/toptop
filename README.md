@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-201%20green-success)
+![Tests](https://img.shields.io/badge/tests-203%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -31,27 +31,39 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 
 ```text
 ╭ AI · local-LLM GPU view · Esc/a to close ──────────────────────────────────╮
-│⚠ ALERTS                                                                    │
-│  [warn] gpu0 VRAM 92% — risk of spilling to RAM                            │
+│◆ MEMORY-BANDWIDTH BOUND   bandwidth 92% · compute 24%                      │
+│  → Token generation is limited by memory bandwidth, not compute — a faster │
+│  GPU core would not help. Quantize further, or batch more requests so each │
+│  weight read serves more tokens.                                           │
 │                                                                            │
-│gpu0  NVIDIA GeForce RTX 4090   290/450W  72°C                              │
-│  compute   █████████▎░░░░░░░░░░░░░░░░░░░░  31%                             │
-│  mem b/w   ███████████████████████▍░░░░░░  78%                             │
-│  vram      ███████████████████████████▌░░ 22.0 GiB / 24.0 GiB              │
-│             ⚠ near VRAM limit — models may spill to RAM (5–20× slower)     │
+│gpu0  NVIDIA GeForce RTX 4090   344/450W  74°C                              │
+│  compute   ███████▎░░░░░░░░░░░░░░░░░░░░░░  24%                             │
+│  mem b/w   ███████████████████████████▋░░  92%                             │
+│  vram      █████████████████████▊░░░░░░░░ 17.4 GiB / 24.0 GiB              │
+│  trend     compute ▲  /  ▼ bandwidth                                       │
+│            ⢀⣀⣶⣤⣴⣾⣷⣦⣤⣶⣿⣶⣤⣴⣾⣷⣦⣤⣶⣿⣶⣤                                          │
+│            ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿                                          │
+│            ⠙⠿⠿⠋⠻⠿⠟⠙⠿⠿⠋⠻⠿⠟⠙⠿⠿⠋⠻⠿                                          │
 │                                                                            │
 │Inference servers (auto-discovered)                                         │
-│  vLLM :8000  meta-llama/Llama-3-8B                                         │
-│    83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms  │
+│  vLLM:8000  meta-llama/Llama-3-8B                                          │
+│    73.7 tok/s (0.21 tok/s/W)  prefill 1200/s  kv 96%  ⟲ preempt 1.8/s      │
+│    phase  prefill 94% · decode 6%  — prefill-dominated (94% of tokens)     │
+│    ttft   p50 248ms  p95 662ms  p99 1038ms                                 │
+│    tpot   p50 13ms  p95 23ms  p99 33ms                                     │
 │                                                                            │
 │GPU processes (by VRAM)                                                     │
 │      PID       VRAM   CPU%  PROCESS                                        │
+│    27494   13.9 GiB   16.4  python -m vllm.entrypoints.openai.api_server   │
 ╰────────────────────────────────────────────────────────────────────────────╯
 ```
 </details>
 
-> Local LLMs are **memory‑bandwidth bound** once the model is resident, so a GPU at "31% util" can
-> still be your bottleneck. toptop shows **compute vs. bandwidth** side by side, warns **before**
+> Local LLMs are **memory‑bandwidth bound** once the model is resident, so a GPU at "24% util" can
+> still be your bottleneck. toptop doesn't just show you that — it **names the bottleneck** and
+> says what to change. Underneath, it shows **compute vs. bandwidth** side by side and over time,
+> surfaces **KV‑cache preemption** (requests thrown away and recomputed — no other terminal tool
+> shows this), reports the **TTFT/TPOT SLO triad** at p50/p95/p99, warns **before**
 > VRAM spills to system RAM (a 5–20× slowdown), reads the driver's throttle reasons, and
 > **auto‑discovers your inference servers** (vLLM · llama.cpp · Ollama · TGI · TensorRT‑LLM · LM Studio) to scrape live
 > **tokens/sec**, KV‑cache pressure and queue depth — then exports it as JSON **or Prometheus**
