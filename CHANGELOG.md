@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenTelemetry export** — `--otlp http://localhost:4318` pushes OTLP/HTTP
+  JSON to a collector every tick, complementing the pull-based
+  `--serve-metrics`. `system.*`, `gpu.*` and `inference.*` gauges carry the
+  runtime, model and GPU as attributes. Payload construction is a pure function
+  and is validated in tests by parsing it back. A collector that is down is
+  reported once and then counted rather than spamming stderr, and recovery is
+  reported too. Plain `http://` only — an `https://` endpoint is refused at
+  startup with an explanation, since toptop carries no TLS stack and OTLP
+  collectors are near-universally local. (#38)
+
 ### Changed
 
 - **The process table drops columns on narrow terminals** instead of squeezing
