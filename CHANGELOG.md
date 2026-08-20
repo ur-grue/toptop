@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The process table drops columns on narrow terminals** instead of squeezing
+  all of them into unreadable stubs (`PI USE CP ME ME DIS VR TI S`). Columns
+  go by usefulness — `USER`, `TIME`, `DISK` first — while `PID` and `COMMAND`
+  are never dropped, so a row stays identifiable. Click-to-sort follows the
+  columns actually drawn, so the header and the hit map can't disagree.
+
 ### Fixed
 
 - **Unified-memory GPUs no longer render as `vram 0 B / 0 B`.** Apple Silicon
