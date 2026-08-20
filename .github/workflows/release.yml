@@ -65,8 +65,15 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
           - name: x86_64-macos
-            os: macos-13
+            # Cross-compiled from the arm64 runner: GitHub has retired the
+            # Intel `macos-13` runners for public repos, and a job that queues
+            # forever would block every release. Apple's toolchain targets
+            # x86_64 from arm64 natively, so this is a first-class build — it
+            # just cannot be *executed* here, which is why the smoke test below
+            # skips this one target rather than lying about having run it.
+            os: macos-latest
             target: x86_64-apple-darwin
+            cross: true
           - name: x86_64-windows
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -82,6 +89,9 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Smoke-test the binary we are about to ship
+        # Skipped only for the cross-compiled target, which this runner cannot
+        # execute. Every natively-built binary is run before it is published.
+        if: ${{ !matrix.cross }}
         shell: bash
         run: |
           BIN="target/${{ matrix.target }}/release/toptop"
@@ -91,6 +101,19 @@ jobs:
           # collectors without needing a TTY, so a binary that cannot sample
           # this machine fails here rather than in someone's terminal.
           "$BIN" --snapshot > /dev/null
+
+      - name: Verify the cross-compiled binary is what we think it is
+        if: ${{ matrix.cross }}
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/toptop"
+          file "$BIN"
+          # It cannot be run here, so at least assert the architecture — a
+          # silently-arm64 "Intel" build would be worse than no Intel build.
+          file "$BIN" | grep -q "x86_64" || {
+            echo "expected an x86_64 binary, got: $(file "$BIN")" >&2
+            exit 1
+          }
 
       - name: Package (unix)
         if: runner.os != 'Windows'
