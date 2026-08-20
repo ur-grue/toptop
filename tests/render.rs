@@ -639,6 +639,60 @@ fn ai_workloads_are_cached_per_tick() {
     );
 }
 
+/// The AI view must not clip facts at the panel border, and must not draw a
+/// trend heading over blank rows for a GPU that reports no utilization.
+#[test]
+fn the_ai_view_wraps_instead_of_clipping() {
+    use toptop::metrics::ServerStats;
+
+    let mut app = App::new(&Config::default());
+    // A GPU that reports nothing — Apple Silicon, most integrated GPUs.
+    app.collector.gpus = vec![toptop::metrics::gpu::Gpu {
+        name: "Apple M3".into(),
+        util_pct: 0.0,
+        has_util: false,
+        mem_util: 0.0,
+        has_mem_util: false,
+        mem_used: 0,
+        mem_total: 0,
+        temp: 0.0,
+        power: 0.0,
+        power_limit: 0.0,
+        throttled: false,
+    }];
+    // A server with every stat populated, so the line is at its longest.
+    app.collector.servers = vec![ServerStats {
+        runtime: "vLLM",
+        pid: 4242,
+        port: 8000,
+        model: "meta-llama/Llama-3-8B".into(),
+        gen_tps: Some(83.4),
+        prompt_tps: Some(1240.0),
+        running: Some(2.0),
+        waiting: Some(5.0),
+        kv_pct: Some(64.0),
+        ttft_ms: Some(180.0),
+        preemptions: Some(12.0),
+        preempt_rate: Some(1.2),
+        ..Default::default()
+    }];
+    app.show_ai = true;
+    let screen = render_text(&mut app, 118, 40);
+    let joined = screen.join("\n");
+
+    // Preemption is the most important fact on that line and used to be the
+    // one clipped off the end.
+    assert!(
+        joined.contains("preempt 1.2/s"),
+        "the preemption rate was clipped:\n{joined}"
+    );
+    // No "trend" heading without a trend to show.
+    assert!(
+        !joined.contains("compute ▲"),
+        "a GPU reporting no utilization drew a trend over blank rows:\n{joined}"
+    );
+}
+
 /// A narrow terminal must show fewer, readable columns rather than ten
 /// unreadable stubs.
 #[test]
