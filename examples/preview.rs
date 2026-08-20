@@ -70,6 +70,8 @@ fn main() {
                 }),
                 gpu_offload_pct: None,
                 addr: None,
+                preemptions: Some(12.0),
+                preempt_rate: Some(1.2),
             }];
             app.alerts = toptop::alerts::evaluate(&app.collector, &app.alert_cfg);
         }

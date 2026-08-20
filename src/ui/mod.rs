@@ -1191,6 +1191,40 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 dim(theme),
             )));
         }
+        // Compute vs memory-bandwidth over time, mirrored around a midline.
+        // Token generation is bandwidth-bound once the model is resident, so
+        // the *divergence* between these two lines is the diagnosis: bandwidth
+        // pinned while compute idles means you are memory-bound, and no amount
+        // of a faster GPU core will help.
+        if let Some(h) = c.gpu_history.get(i) {
+            let graph_h = 4usize;
+            if h.compute.len() >= 2 && bw >= 12 && lines.len() + graph_h + 1 < inner.height as usize
+            {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {:<10}", "trend"), dim(theme)),
+                    Span::styled("compute ▲", Style::default().fg(theme.accent.color())),
+                    Span::styled("  /  ", dim(theme)),
+                    Span::styled("▼ bandwidth", Style::default().fg(theme.accent2.color())),
+                ]));
+                // Only the visible window, so the graph scrolls with time
+                // instead of squeezing an ever-longer history into `bw` cells.
+                let (compute, bandwidth) = (h.compute.tail(bw * 2), h.bandwidth.tail(bw * 2));
+                for line in graph::mirror_graph(
+                    &compute,
+                    &bandwidth,
+                    100.0,
+                    bw,
+                    graph_h,
+                    theme.accent.color(),
+                    theme.accent2.color(),
+                ) {
+                    let mut spans = vec![Span::styled("            ", dim(theme))];
+                    spans.extend(line.spans);
+                    lines.push(Line::from(spans));
+                }
+            }
+        }
+
         lines.push(Line::from(Span::raw("")));
     }
 
@@ -1301,6 +1335,21 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                     format!("  req {:.0}/{:.0}", r, sv.waiting.unwrap_or(0.0)),
                     dim(theme),
                 ));
+            }
+            // Preemption is the signal nothing else surfaces: the server threw
+            // away work it had already done because the KV cache ran out.
+            // Throughput collapses while the GPU still looks busy.
+            if let Some(rate) = sv.preempt_rate.filter(|r| *r > 0.0) {
+                stat.push(Span::styled(
+                    format!("  ⟲ preempt {rate:.1}/s"),
+                    Style::default()
+                        .fg(theme.grad(1.0))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else if let Some(total) = sv.preemptions.filter(|t| *t > 0.0) {
+                // Not preempting now, but it has — worth knowing this server
+                // has been under KV pressure at some point.
+                stat.push(Span::styled(format!("  ⟲ {total:.0} total"), dim(theme)));
             }
             // Only fall back to the mean TTFT when no histogram was available;
             // the percentile line below says strictly more.
