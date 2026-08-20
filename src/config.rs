@@ -10,8 +10,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::alerts::AlertConfig;
-use crate::app::LayoutPreset;
+use crate::alerts::{AlertConfig, SinkKind};
+use crate::app::{LayoutPreset, ProcColumn, DEFAULT_COLUMNS};
+use crate::keys::{Action, KeyMap};
+use crate::metrics::infer::{parse_target, Target};
+use crate::notify::Notifier;
 use crate::theme;
 
 /// User-tunable settings.
@@ -19,7 +22,7 @@ use crate::theme;
 pub struct Config {
     /// Refresh interval in milliseconds.
     pub tick_ms: u64,
-    /// Index into [`theme::THEMES`].
+    /// Index into [`theme::themes()`].
     pub theme_idx: usize,
     /// Show the process tree by default.
     pub tree: bool,
@@ -27,8 +30,23 @@ pub struct Config {
     pub per_core: bool,
     /// Body layout preset.
     pub layout: LayoutPreset,
+    /// Process-table columns, in display order.
+    pub columns: Vec<ProcColumn>,
+    /// Key → action bindings.
+    pub keys: KeyMap,
+    /// Warnings collected while parsing (bad bindings and the like), reported
+    /// once at startup. Never persisted.
+    pub warnings: Vec<String>,
     /// Alert thresholds (VRAM spill, KV-cache saturation, queue backlog).
     pub alerts: AlertConfig,
+    /// Where alert fire/resolve transitions are delivered.
+    pub notify: Notifier,
+    /// Seconds within which a re-firing alert is treated as a flap and not
+    /// re-announced.
+    pub flap_window_secs: u64,
+    /// Manually configured inference-server targets (`--llm-server`), scraped
+    /// alongside auto-discovery.
+    pub llm_servers: Vec<Target>,
 }
 
 impl Default for Config {
@@ -39,7 +57,13 @@ impl Default for Config {
             tree: false,
             per_core: true,
             layout: LayoutPreset::Full,
+            columns: DEFAULT_COLUMNS.to_vec(),
+            keys: KeyMap::default(),
+            warnings: Vec::new(),
             alerts: AlertConfig::default(),
+            notify: Notifier::default(),
+            flap_window_secs: crate::alerts::DEFAULT_FLAP_WINDOW.as_secs(),
+            llm_servers: Vec::new(),
         }
     }
 }
@@ -98,6 +122,20 @@ impl Config {
                 "tree" => cfg.tree = parse_bool(value).unwrap_or(cfg.tree),
                 "per_core" => cfg.per_core = parse_bool(value).unwrap_or(cfg.per_core),
                 "layout" => cfg.layout = LayoutPreset::from_name(value).unwrap_or(cfg.layout),
+                "llm_servers" => {
+                    // Malformed entries are skipped like any other bad config
+                    // value; `--llm-server` reports them instead.
+                    cfg.llm_servers
+                        .extend(value.split(',').filter_map(|t| parse_target(t).ok()));
+                }
+                "columns" => {
+                    let cols: Vec<ProcColumn> =
+                        value.split(',').filter_map(ProcColumn::from_name).collect();
+                    // An all-unknown list would leave an unusable table.
+                    if !cols.is_empty() {
+                        cfg.columns = cols;
+                    }
+                }
                 "alert_vram_pct" => {
                     if let Ok(v) = value.parse::<f32>() {
                         cfg.alerts.vram_spill_pct = v.clamp(1.0, 100.0);
@@ -108,12 +146,46 @@ impl Config {
                         cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
                     }
                 }
+                "alert_preempt" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        cfg.alerts.preempt_rate_high = v.max(0.0);
+                    }
+                }
                 "alert_queue" => {
                     if let Ok(v) = value.parse::<f64>() {
                         cfg.alerts.queue_high = v.max(1.0);
                     }
                 }
-                _ => {}
+                "alert_cmd" => {
+                    if !value.is_empty() {
+                        cfg.notify.cmd = Some(value.to_string());
+                    }
+                }
+                "alert_flap_secs" => {
+                    if let Ok(v) = value.parse::<u64>() {
+                        cfg.flap_window_secs = v.min(3600);
+                    }
+                }
+                "alert_webhook" | "alert_ntfy" | "alert_slack" => {
+                    let kind = match key {
+                        "alert_webhook" => SinkKind::Webhook,
+                        "alert_ntfy" => SinkKind::Ntfy,
+                        _ => SinkKind::Slack,
+                    };
+                    // Only absolute http(s) URLs — anything else would be
+                    // handed to curl to fail on later, silently.
+                    if value.starts_with("http://") || value.starts_with("https://") {
+                        cfg.notify.sinks.push((kind, value.to_string()));
+                    } else if !value.is_empty() {
+                        cfg.warnings
+                            .push(format!("{key}: '{value}' is not an http(s) URL, ignored"));
+                    }
+                }
+                _ => {
+                    if let Some(action) = key.strip_prefix("bind_").and_then(Action::from_name) {
+                        cfg.warnings.extend(cfg.keys.bind(action, value));
+                    }
+                }
             }
         }
         cfg
@@ -135,7 +207,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let theme_name = theme::THEMES
+        let theme_name = theme::themes()
             .get(self.theme_idx)
             .map(|t| t.name)
             .unwrap_or("gruvbox");
@@ -146,6 +218,8 @@ impl Config {
              tree = {}\n\
              per_core = {}\n\
              layout = {}\n\
+             columns = {}\n\
+             # Rebind keys with e.g.  bind_quit = ctrl+x\n\
              alert_vram_pct = {}\n\
              alert_kv_pct = {}\n\
              alert_queue = {}\n",
@@ -154,6 +228,11 @@ impl Config {
             self.tree,
             self.per_core,
             self.layout.label(),
+            self.columns
+                .iter()
+                .map(|c| c.name())
+                .collect::<Vec<_>>()
+                .join(","),
             self.alerts.vram_spill_pct,
             self.alerts.kv_high_pct,
             self.alerts.queue_high
@@ -178,7 +257,7 @@ mod tests {
     fn defaults_are_sane() {
         let c = Config::default();
         assert!(c.tick_ms >= 100);
-        assert!(c.theme_idx < theme::THEMES.len());
+        assert!(c.theme_idx < theme::themes().len());
     }
 
     #[test]
@@ -203,6 +282,73 @@ mod tests {
         assert_eq!(cfg.alerts.vram_spill_pct, 100.0);
         assert_eq!(cfg.alerts.kv_high_pct, 1.0);
         assert_eq!(cfg.alerts.queue_high, AlertConfig::default().queue_high);
+    }
+
+    #[test]
+    fn parses_llm_server_targets() {
+        let cfg = Config::parse("llm_servers = gpu-box:8000, 10.0.0.5:11434, garbage\n");
+        // Malformed entries are dropped, valid ones kept, in order.
+        assert_eq!(cfg.llm_servers.len(), 2);
+        assert_eq!(cfg.llm_servers[0].host, "gpu-box");
+        assert_eq!(cfg.llm_servers[1].port, 11434);
+    }
+
+    #[test]
+    fn parses_and_ignores_column_lists() {
+        let cfg = Config::parse("columns = pid, cmd, cpu\n");
+        assert_eq!(
+            cfg.columns,
+            vec![ProcColumn::Pid, ProcColumn::Command, ProcColumn::Cpu]
+        );
+        // Unknown names are dropped; an entirely unknown list keeps the default.
+        assert_eq!(
+            Config::parse("columns = pid, nope\n").columns,
+            vec![ProcColumn::Pid]
+        );
+        assert_eq!(
+            Config::parse("columns = nope\n").columns,
+            DEFAULT_COLUMNS.to_vec()
+        );
+    }
+
+    #[test]
+    fn parses_key_bindings_and_warns_on_bad_ones() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let cfg = Config::parse("bind_quit = ctrl+x\nbind_tree = nonsense\nbind_nope = z\n");
+        assert_eq!(
+            cfg.keys
+                .action(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            Some(Action::Quit)
+        );
+        // The unusable spec warns and leaves the default binding in place.
+        assert!(cfg.warnings.iter().any(|w| w.contains("bind_tree")));
+        assert_eq!(
+            cfg.keys
+                .action(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)),
+            Some(Action::Tree)
+        );
+        // An unknown action name is ignored silently, like any unknown key.
+        assert_eq!(cfg.warnings.len(), 2);
+    }
+
+    #[test]
+    fn parses_alert_sinks_and_rejects_non_urls() {
+        let cfg = Config::parse(
+            "alert_cmd = notify-send \"$TOPTOP_ALERT_MSG\"\n\
+             alert_webhook = http://localhost:9000/hook\n\
+             alert_ntfy = https://ntfy.sh/toptop\n\
+             alert_slack = not-a-url\n\
+             alert_flap_secs = 30\n",
+        );
+        assert_eq!(
+            cfg.notify.cmd.as_deref(),
+            Some("notify-send \"$TOPTOP_ALERT_MSG\"")
+        );
+        assert_eq!(cfg.notify.sinks.len(), 2);
+        assert_eq!(cfg.notify.sinks[0].0, SinkKind::Webhook);
+        assert_eq!(cfg.notify.sinks[1].0, SinkKind::Ntfy);
+        assert!(cfg.warnings.iter().any(|w| w.contains("alert_slack")));
+        assert_eq!(cfg.flap_window_secs, 30);
     }
 
     #[test]

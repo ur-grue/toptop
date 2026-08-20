@@ -207,7 +207,7 @@ pub fn meter_spans(pct: f32, width: usize, theme: &Theme) -> Vec<Span<'static>> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::THEMES;
+    use crate::theme::BUILTINS as THEMES;
 
     #[test]
     fn graph_dimensions() {
