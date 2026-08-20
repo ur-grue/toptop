@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   736-line document; there is now a one-line install and `toptop --demo`
   directly under the hero, and the install section itself is binary-first with
   a per-platform table instead of source-build-first.
+### Changed
+
+- **The empty AI view points at `--demo`.** Opening it on a machine with no GPU
+  explained that there was no GPU and stopped there; nobody would guess the
+  whole view can be demonstrated without one. It now says so — except while the
+  demo is already running.
 
 ### Fixed
 
