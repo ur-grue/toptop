@@ -45,6 +45,13 @@ jobs:
       - name: Hot-path regression guard
         run: cargo bench
 
+      - name: Lint the install script
+        # It is piped into `sh` from the README, so it had better be valid
+        # POSIX sh and free of the mistakes shellcheck knows about.
+        run: |
+          sh -n install.sh
+          shellcheck install.sh
+
   windows:
     # Windows support is best-effort: the process table, CPU/memory/network
     # rates and the NVIDIA GPU panel work, while the /proc-based bits
