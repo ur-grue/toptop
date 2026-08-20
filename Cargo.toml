@@ -47,6 +47,14 @@ libc = "0.2"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
+# Hot-path regression guard (see benches/hot_path.rs). No criterion: the guard
+# is about catching algorithmic regressions on noisy CI runners, which needs
+# generous budgets rather than statistics — and the project carries no
+# dependencies it doesn't need.
+[[bench]]
+name = "hot_path"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = "thin"
