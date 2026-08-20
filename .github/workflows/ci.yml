@@ -121,14 +121,15 @@ jobs:
         run: cargo build --all-targets
 
   audit:
-    # The dependency tree is tiny, so this costs seconds and catches an
-    # advisory against ratatui/crossterm/sysinfo the day it lands.
+    # Catches an advisory against ratatui/crossterm/sysinfo the day it lands.
+    # The audit itself takes seconds against a dependency tree this small —
+    # `cargo install` was the expensive part, so a prebuilt binary is used.
     name: cargo audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      - name: Install cargo-audit (prebuilt)
+        uses: taiki-e/install-action@cargo-audit
       - name: Audit
         run: cargo audit
