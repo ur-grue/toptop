@@ -48,6 +48,8 @@ OPTIONS:
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
         --export <FMT>   Print metrics and exit: 'json' (default), 'csv', or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus endpoint (default 127.0.0.1:9709)
+        --llm-server <H:P>   Scrape an inference server at host:port (repeatable;
+                             bypasses localhost auto-discovery)
         --alert-vram <PCT>   VRAM % that triggers the spill-risk alert (default 90)
         --alert-kv <PCT>     KV-cache % considered saturated (default 95)
         --alert-queue <N>    Queued requests considered a backlog (default 8)
@@ -181,6 +183,12 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                     _ => "127.0.0.1:9709".to_string(),
                 };
                 opts.serve_addr = Some(addr);
+            }
+            "--llm-server" => {
+                let spec = args.next().ok_or("--llm-server requires host:port")?;
+                opts.cfg
+                    .llm_servers
+                    .push(toptop::metrics::infer::parse_target(spec)?);
             }
             "--alert-vram" => {
                 let v = args
@@ -574,6 +582,18 @@ mod tests {
             Some("notify-send $TOPTOP_ALERT_MSG")
         );
         assert!(parse(&["--alert-cmd"]).unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn llm_server_targets_are_repeatable_and_validated() {
+        let o = parse(&["--llm-server", "gpu-box:8000", "--llm-server", "[::1]:9000"]).unwrap();
+        assert_eq!(o.cfg.llm_servers.len(), 2);
+        assert_eq!(o.cfg.llm_servers[0].host, "gpu-box");
+        assert_eq!(o.cfg.llm_servers[1].host, "::1");
+        assert!(parse(&["--llm-server", "nope"])
+            .unwrap_err()
+            .contains("host:port"));
+        assert!(parse(&["--llm-server"]).unwrap_err().contains("requires"));
     }
 
     #[test]

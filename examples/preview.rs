@@ -58,7 +58,18 @@ fn main() {
                 waiting: Some(5.0),
                 kv_pct: Some(64.0),
                 ttft_ms: Some(180.0),
+                ttft: Some(toptop::metrics::Percentiles {
+                    p50: 180.0,
+                    p95: 520.0,
+                    p99: 910.0,
+                }),
+                tpot: Some(toptop::metrics::Percentiles {
+                    p50: 12.0,
+                    p95: 28.0,
+                    p99: 47.0,
+                }),
                 gpu_offload_pct: None,
+                addr: None,
             }];
             app.alerts = toptop::alerts::evaluate(&app.collector, &app.alert_cfg);
         }

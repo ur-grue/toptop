@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use crate::alerts::{AlertConfig, SinkKind};
 use crate::app::{LayoutPreset, ProcColumn, DEFAULT_COLUMNS};
 use crate::keys::{Action, KeyMap};
+use crate::metrics::infer::{parse_target, Target};
 use crate::notify::Notifier;
 use crate::theme;
 
@@ -43,6 +44,9 @@ pub struct Config {
     /// Seconds within which a re-firing alert is treated as a flap and not
     /// re-announced.
     pub flap_window_secs: u64,
+    /// Manually configured inference-server targets (`--llm-server`), scraped
+    /// alongside auto-discovery.
+    pub llm_servers: Vec<Target>,
 }
 
 impl Default for Config {
@@ -59,6 +63,7 @@ impl Default for Config {
             alerts: AlertConfig::default(),
             notify: Notifier::default(),
             flap_window_secs: crate::alerts::DEFAULT_FLAP_WINDOW.as_secs(),
+            llm_servers: Vec::new(),
         }
     }
 }
@@ -117,6 +122,12 @@ impl Config {
                 "tree" => cfg.tree = parse_bool(value).unwrap_or(cfg.tree),
                 "per_core" => cfg.per_core = parse_bool(value).unwrap_or(cfg.per_core),
                 "layout" => cfg.layout = LayoutPreset::from_name(value).unwrap_or(cfg.layout),
+                "llm_servers" => {
+                    // Malformed entries are skipped like any other bad config
+                    // value; `--llm-server` reports them instead.
+                    cfg.llm_servers
+                        .extend(value.split(',').filter_map(|t| parse_target(t).ok()));
+                }
                 "columns" => {
                     let cols: Vec<ProcColumn> =
                         value.split(',').filter_map(ProcColumn::from_name).collect();
@@ -266,6 +277,15 @@ mod tests {
         assert_eq!(cfg.alerts.vram_spill_pct, 100.0);
         assert_eq!(cfg.alerts.kv_high_pct, 1.0);
         assert_eq!(cfg.alerts.queue_high, AlertConfig::default().queue_high);
+    }
+
+    #[test]
+    fn parses_llm_server_targets() {
+        let cfg = Config::parse("llm_servers = gpu-box:8000, 10.0.0.5:11434, garbage\n");
+        // Malformed entries are dropped, valid ones kept, in order.
+        assert_eq!(cfg.llm_servers.len(), 2);
+        assert_eq!(cfg.llm_servers[0].host, "gpu-box");
+        assert_eq!(cfg.llm_servers[1].port, 11434);
     }
 
     #[test]

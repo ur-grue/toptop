@@ -27,6 +27,7 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
     let shared = Arc::new(Mutex::new(String::from("# toptop: warming up\n")));
     let interval = Duration::from_millis(cfg.tick_ms.max(1000));
     let alert_cfg = cfg.alerts.clone();
+    let targets = cfg.llm_servers.clone();
     let notifier = cfg.notify.clone();
     let flap = Duration::from_secs(cfg.flap_window_secs);
 
@@ -36,7 +37,7 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
         std::thread::Builder::new()
             .name("toptop-exporter".into())
             .spawn(move || {
-                let mut c = Collector::new(256);
+                let mut c = Collector::with_targets(256, targets);
                 let mut tracker = AlertTracker::new(flap);
                 loop {
                     c.refresh();
