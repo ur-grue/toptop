@@ -173,6 +173,23 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     // Live clock, right-aligned — but only when it won't collide with the
     // left-hand status text (otherwise the two overlap on narrow terminals).
     let clock = chrono::Local::now().format("%H:%M:%S").to_string();
+
+    // Drop whole segments that don't fit rather than letting ratatui cut the
+    // last one mid-word ("563 tasks, 301 r"). Each span is a self-contained
+    // fact, so losing one entirely reads as a narrow terminal; half of one
+    // reads as a bug.
+    let mut budget = area.width as usize;
+    let mut fitted = Vec::with_capacity(spans.len());
+    for span in spans {
+        let len = span.content.chars().count();
+        if len > budget {
+            break;
+        }
+        budget -= len;
+        fitted.push(span);
+    }
+    let spans = fitted;
+
     let left_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let left = Paragraph::new(Line::from(spans));
     f.render_widget(left, area);
@@ -632,18 +649,37 @@ fn render_sensors(f: &mut Frame, area: Rect, app: &App) {
         } else {
             "  --".to_string()
         };
+        // A GPU that reports no temperature (Apple Silicon, most integrated
+        // GPUs) must not be rendered as a suspiciously cool 0 °C.
+        let temp_txt = if g.temp > 0.0 {
+            format!("{:>3.0}°C", g.temp)
+        } else {
+            "   —".to_string()
+        };
         spans.push(Span::styled(
-            format!(" {} {:>3.0}°C", util_txt, g.temp),
+            format!(" {util_txt} {temp_txt}"),
             Style::default().fg(theme.grad(u / 100.0)),
         ));
         lines.push(Line::from(spans));
         if lines.len() < cap {
-            lines.push(Line::from(Span::styled(
+            // Matches the AI view: unified-memory GPUs report no VRAM total,
+            // and "0 B / 0 B" reads like a broken driver rather than a
+            // different memory architecture.
+            let mem_txt = if g.mem_total > 0 {
                 format!(
-                    "  {} · vram {} / {}",
-                    truncate(&g.name, (inner.width as usize).saturating_sub(24)),
+                    " · vram {} / {}",
                     human_bytes(g.mem_used),
                     human_bytes(g.mem_total)
+                )
+            } else if g.name.contains("Apple") {
+                " · unified memory".to_string()
+            } else {
+                String::new()
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {}{mem_txt}",
+                    truncate(&g.name, (inner.width as usize).saturating_sub(24)),
                 ),
                 dim(theme),
             )));
@@ -1197,11 +1233,17 @@ fn render_renice_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app:
 fn render_ai(f: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
     let c = &app.collector;
-    let rect = centered(area, 78.min(area.width), 26.min(area.height));
-    f.render_widget(Clear, rect);
-    let block = panel("AI · local-LLM GPU view · Esc/a to close", theme);
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
+    // The panel is sized to its content, so a machine with one GPU and no
+    // inference server doesn't get a box two-thirds full of empty rows. The
+    // lines are therefore built against a provisional area first, and the real
+    // rect is derived from how many there turned out to be.
+    let width = 78.min(area.width);
+    let inner = Rect {
+        x: 0,
+        y: 0,
+        width: width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
     if inner.width < 4 || inner.height < 2 {
         return;
     }
@@ -1711,7 +1753,22 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
 
-    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    // Trailing blank lines are an artifact of the per-GPU spacer, not content.
+    while lines.last().is_some_and(|l| line_is_blank(l)) {
+        lines.pop();
+    }
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let rect = centered(area, width, height);
+    f.render_widget(Clear, rect);
+    let block = panel("AI · local-LLM GPU view · Esc/a to close", theme);
+    let target = block.inner(rect);
+    f.render_widget(block, rect);
+    f.render_widget(Paragraph::new(Text::from(lines)), target);
+}
+
+/// Whether a rendered line carries no visible text.
+fn line_is_blank(line: &Line<'_>) -> bool {
+    line.spans.iter().all(|s| s.content.trim().is_empty())
 }
 
 fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {

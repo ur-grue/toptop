@@ -475,12 +475,22 @@ impl Collector {
         self.disk_list.clear();
         let mut total_read = 0u64;
         let mut total_write = 0u64;
+        // One physical filesystem can be mounted several times — macOS firmlinks
+        // (`/` and `/System/Volumes/Data`), Linux bind mounts, btrfs
+        // subvolumes. Listing it twice wastes a panel row, and *summing* its
+        // I/O twice inflates the read/write rates, so both are deduplicated on
+        // the device identity.
+        let mut seen: std::collections::HashSet<(String, u64)> = std::collections::HashSet::new();
         for disk in self.disks.list() {
             let total = disk.total_space();
             let available = disk.available_space();
             let used = total.saturating_sub(available);
+            let name = disk.name().to_string_lossy().to_string();
+            if !seen.insert((name.clone(), total)) {
+                continue;
+            }
             self.disk_list.push(DiskInfo {
-                name: disk.name().to_string_lossy().to_string(),
+                name,
                 mount: disk.mount_point().to_string_lossy().to_string(),
                 fs: disk.file_system().to_string_lossy().to_string(),
                 total,
@@ -492,7 +502,14 @@ impl Collector {
             total_read = total_read.saturating_add(usage.total_read_bytes);
             total_write = total_write.saturating_add(usage.total_written_bytes);
         }
-        self.disk_list.sort_by(|a, b| a.mount.cmp(&b.mount));
+        // Shortest mount first within a device, then alphabetically: `/` should
+        // outrank `/System/Volumes/Data` when both survive dedup.
+        self.disk_list.sort_by(|a, b| {
+            a.mount
+                .len()
+                .cmp(&b.mount.len())
+                .then(a.mount.cmp(&b.mount))
+        });
 
         if self.last_disk_read == 0 && self.last_disk_write == 0 {
             self.last_disk_read = total_read;
