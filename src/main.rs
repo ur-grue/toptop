@@ -80,6 +80,8 @@ struct Opts {
     config_path: Option<PathBuf>,
     no_save: bool,
     snapshot: bool,
+    record: Option<PathBuf>,
+    replay: Option<PathBuf>,
     export: Option<&'static str>,
     start_ai: bool,
     demo: bool,
@@ -113,6 +115,8 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
         config_path: None,
         no_save: false,
         snapshot: false,
+        record: None,
+        replay: None,
         export: None,
         start_ai: false,
         demo: false,
@@ -231,6 +235,14 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                     .map_err(|_| "--alert-queue value must be a number")?;
                 opts.cfg.alerts.queue_high = v.max(1.0);
             }
+            "--record" => {
+                let p = args.next().ok_or("--record requires a file path")?;
+                opts.record = Some(PathBuf::from(p));
+            }
+            "--replay" => {
+                let p = args.next().ok_or("--replay requires a file path")?;
+                opts.replay = Some(PathBuf::from(p));
+            }
             "--snapshot" => opts.snapshot = true,
             "--export" => {
                 // Optional format argument: `json` (default) or `prometheus`.
@@ -252,6 +264,9 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
             }
             other => return Err(format!("unknown argument '{other}' (try --help)")),
         }
+    }
+    if opts.record.is_some() && opts.replay.is_some() {
+        return Err("--record and --replay are mutually exclusive".to_string());
     }
     Ok(opts)
 }
@@ -309,6 +324,8 @@ fn main() -> Result<()> {
         config_path,
         no_save,
         snapshot,
+        record,
+        replay,
         export,
         start_ai,
         demo,
@@ -340,6 +357,34 @@ fn main() -> Result<()> {
     }
 
     let mut app = App::new(&cfg);
+
+    if let Some(path) = &replay {
+        let r = toptop::record::Replay::load(path)
+            .with_context(|| format!("cannot replay {}", path.display()))?;
+        if r.schema_version() != toptop::record::SCHEMA_VERSION {
+            eprintln!(
+                "toptop: {} was written by schema v{}, this build reads v{} — \
+                 fields it doesn't know are ignored",
+                path.display(),
+                r.schema_version(),
+                toptop::record::SCHEMA_VERSION
+            );
+        }
+        if r.skipped > 0 {
+            eprintln!(
+                "toptop: {}: skipped {} unreadable frame(s)",
+                path.display(),
+                r.skipped
+            );
+        }
+        app.replay = Some(r);
+    }
+    if let Some(path) = &record {
+        app.recorder = Some(
+            toptop::record::Recorder::create(path)
+                .with_context(|| format!("cannot record to {}", path.display()))?,
+        );
+    }
     app.show_ai = start_ai || demo;
     app.demo = demo;
     let mut terminal = setup_terminal().context("failed to initialize terminal")?;
@@ -604,6 +649,19 @@ mod tests {
             .unwrap_err()
             .contains("host:port"));
         assert!(parse(&["--llm-server"]).unwrap_err().contains("requires"));
+    }
+
+    #[test]
+    fn record_and_replay_flags() {
+        let o = parse(&["--record", "run.jsonl"]).unwrap();
+        assert_eq!(o.record.as_deref(), Some(std::path::Path::new("run.jsonl")));
+        let o = parse(&["--replay", "run.jsonl"]).unwrap();
+        assert_eq!(o.replay.as_deref(), Some(std::path::Path::new("run.jsonl")));
+        assert!(parse(&["--record"]).unwrap_err().contains("requires"));
+        assert!(parse(&["--replay"]).unwrap_err().contains("requires"));
+        // Recording a replay would be a confusing no-op.
+        let e = parse(&["--record", "a", "--replay", "b"]).unwrap_err();
+        assert!(e.contains("mutually exclusive"), "{e}");
     }
 
     #[test]

@@ -83,7 +83,7 @@ pub struct DiskInfo {
 }
 
 /// One process row.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct ProcInfo {
     pub pid: u32,
     pub ppid: Option<u32>,
@@ -111,7 +111,7 @@ pub struct ProcInfo {
 }
 
 /// A temperature sensor reading.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SensorInfo {
     pub label: String,
     pub temp: f32,
@@ -120,7 +120,7 @@ pub struct SensorInfo {
 }
 
 /// Battery state, read from `/sys/class/power_supply` when present.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Battery {
     pub percent: f32,
     pub status: String,

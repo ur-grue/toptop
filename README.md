@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-154%20green-success)
+![Tests](https://img.shields.io/badge/tests-162%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -135,6 +135,7 @@ sensors, battery, seven themes — all in a single **~1 MB binary with zero runt
 | 📊 **Inference SLO triad** | TTFT and TPOT p50/p95/p99 from vLLM/TGI/TensorRT-LLM/SGLang histograms, plus the prefill-vs-decode phase mix |
 | ⟲ **KV-cache preemption** | The signal no other tool shows: requests thrown away and recomputed because the cache ran out — a critical alert, not a footnote |
 | 📉 **Compute vs bandwidth over time** | A mirrored braille graph per GPU: compute above the line, memory bandwidth below. The divergence *is* the diagnosis |
+| ⏺️ **Flight recorder** | `--record` writes JSONL snapshots per tick; `--replay` scrubs them in the full TUI on any machine |
 | 🎨 **Seven themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk` · `paper` (light terminals); `full`/`cpu`/`process` presets |
 | 🪶 **Tiny & safe** | ~1 MB binary, zero runtime deps, adaptive 250‑col→tiny layout, restores your terminal even on panic |
 
@@ -472,6 +473,29 @@ Repeatable, and settable as `llm_servers = gpu-box:8000, 10.0.0.5:11434` in the
 config. Manual targets are scraped with the same parsers as discovered ones and
 labelled by their address (they have no local PID). This is also how macOS and
 Windows users get inference metrics today.
+## ⏺️ Record & replay
+
+"The GPU throttled ten minutes ago — what happened?" toptop keeps 256 in-memory
+samples and forgets everything on exit. `--record` turns it into a flight
+recorder:
+
+```bash
+toptop --record incident.jsonl          # one JSON snapshot per tick, ● REC in the header
+toptop --replay incident.jsonl          # scrub it in the normal TUI
+```
+
+In replay mode the footer becomes a transport bar — **space** pauses, **←/→**
+step frame by frame (stepping implies pausing), **q** quits. Every panel you
+know renders from the recording: GPU, VRAM, the AI view, alerts, the process
+table.
+
+The format is JSONL — exactly the `--export json` document, one line per tick,
+each carrying a `schema_version`. That means a recording is also just data:
+`jq` it, attach it to a bug report, or replay a GPU incident on a laptop that
+has no GPU at all. A recording killed mid-write ends in a partial line, which
+is skipped and counted rather than losing the file. Recordings keep 100 process
+rows per frame, not the export's top 20 — a flight recorder that dropped a
+process the moment it stopped being the busiest would lose the culprit.
 
 ## 📦 Config
 
