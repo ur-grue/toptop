@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Unified-memory GPUs no longer render as `vram 0 B / 0 B`.** Apple Silicon
+  reports no discrete VRAM total, which the small GPU panel drew as a
+  zero-byte reading — indistinguishable from a broken driver. It now says
+  "unified memory", matching what the AI view already did.
+- **A GPU that reports no temperature no longer shows `0°C`**, which read as a
+  suspiciously cool card rather than as missing data. It shows `—`.
+- **One filesystem mounted several times is listed once.** macOS firmlinks
+  (`/` and `/System/Volumes/Data`) and Linux bind mounts made the disk panel
+  list the same device twice — and, less visibly, **double-counted its I/O
+  into the global read/write rates**. Both are fixed by deduplicating on the
+  device identity.
+- **The header no longer cuts a segment in half** on narrow terminals
+  (`563 tasks, 301 r`). Segments that don't fit are dropped whole: losing one
+  reads as a narrow terminal, half of one reads as a bug.
+- **The AI view is sized to its content.** It was a fixed 26-row box, so a
+  machine with one GPU and no inference server got a panel two-thirds full of
+  empty rows.
+
 ### Added
 
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
