@@ -493,19 +493,36 @@ fn unified_memory_gpus_are_not_shown_as_zero_bytes() {
         power_limit: 0.0,
         throttled: false,
     }];
-    let screen = render_text(&mut app, 120, 40).join("\n");
+    let screen = render_text(&mut app, 120, 40);
+
+    // Scope the assertions to the GPU panel's own rows. A machine with no swap
+    // legitimately renders "swp 0 B / 0 B" in the memory panel, and a host GPU
+    // may well be at a real temperature — a whole-screen search would blame
+    // this code for either.
+    let gpu_rows: String = screen
+        .iter()
+        .skip_while(|l| !l.contains("gpu0"))
+        .take(2)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !gpu_rows.is_empty(),
+        "no GPU rows rendered:\n{}",
+        screen.join("\n")
+    );
 
     assert!(
-        screen.contains("unified memory"),
-        "a unified-memory GPU should say so"
+        gpu_rows.contains("unified memory"),
+        "a unified-memory GPU should say so:\n{gpu_rows}"
     );
     assert!(
-        !screen.contains("0 B / 0 B"),
-        "0 B / 0 B reads as a broken driver, not a memory architecture:\n{screen}"
+        !gpu_rows.contains("0 B / 0 B"),
+        "0 B / 0 B reads as a broken driver, not a memory architecture:\n{gpu_rows}"
     );
     assert!(
-        !screen.contains("0°C"),
-        "a GPU reporting no temperature must not look suspiciously cool:\n{screen}"
+        !gpu_rows.contains("0°C"),
+        "a GPU reporting no temperature must not look suspiciously cool:\n{gpu_rows}"
     );
 }
 
