@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **KV-cache preemption surfaced as a critical alert** — when a serving runtime
+  runs out of KV cache it preempts in-flight requests, throwing away work
+  already done and recomputing it later. Throughput collapses while every
+  dashboard still shows a busy, healthy GPU. toptop scrapes vLLM's and
+  TensorRT-LLM's preemption counters, differences them into a rate, shows
+  `⟲ preempt 1.8/s` in the AI view, and alerts at **critical** — above a queue
+  backlog, because a backlog only delays work whereas preemption destroys it.
+  Tunable via `alert_preempt` / `--alert-preempt`, exported as
+  `toptop_inference_preemptions_{total,per_second}`. (#31)
+- **GPU compute-vs-bandwidth history** — per-GPU histories of compute,
+  memory-bandwidth and VRAM utilization, drawn in the AI view as one mirrored
+  braille graph (compute above the midline, bandwidth below). Token generation
+  is bandwidth-bound once the model is resident, so the divergence between the
+  two lines over time is the diagnosis: bandwidth pinned while compute idles
+  means memory-bound, and a faster GPU core will not help. (#32)
+
+- **Alert actions** — `alert_cmd` (or `--alert-cmd`) runs a shell command on
+  every alert fire *and* resolve, with `TOPTOP_ALERT_STATE`,
+  `TOPTOP_ALERT_SEVERITY`, `TOPTOP_ALERT_KEY`, `TOPTOP_ALERT_DETAIL` and
+  `TOPTOP_ALERT_MSG` in its environment. Detached, output discarded, so a slow
+  hook can't stall a tick or corrupt the TUI. (#11)
+- **Built-in alert sinks** — `alert_webhook` (JSON), `alert_ntfy` and
+  `alert_slack` POST fire/resolve transitions without writing any curl
+  scripting. Payload construction is pure and unit-tested; delivery shells out
+  to `curl` because Slack and ntfy.sh are HTTPS-only and toptop carries no TLS
+  stack. Works in `--serve-metrics` mode too. (#39)
+- **Alert history timeline + flap suppression** — a new `AlertTracker` turns
+  each tick's alert set into debounced fire/resolve transitions: an alert that
+  re-fires within `alert_flap_secs` (default 60) of its last announcement is
+  tracked but not re-announced, and its matching resolve is suppressed with
+  it, so the timeline never shows a resolve without its fire. Press `A` for the
+  timeline, with relative ages and a suppressed-flap count. (#40)
+
 - **User-defined themes** — drop a `.conf` file into
   `$XDG_CONFIG_HOME/toptop/themes/` and its name joins the built-ins for
   `--theme`, `--list-themes` and the `p` cycle. `base = <built-in>` supplies
@@ -24,6 +57,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which columns are shown and in which order (`columns = pid, cpu, vram,
   command`). The header, the row cells and the click-to-sort mapping are all
   driven by the configured set. (#43)
+- **Inference SLO triad** — TTFT *and* TPOT (time-per-output-token, the
+  inter-token latency users feel while a response streams) as p50/p95/p99,
+  derived by parsing the runtimes' Prometheus histogram buckets with linear
+  in-bucket interpolation, the same way `histogram_quantile` does. Shown per
+  server in the AI view and exported as
+  `toptop_inference_{ttft,tpot}_p{50,95,99}_ms`. A quantile landing in the
+  open-ended `+Inf` bucket reports the largest finite bound rather than
+  inventing a number. (#28)
+- **Prefill vs decode as a first-class split** — the AI view now shows the
+  phase mix (`prefill 34% · decode 66%`) and names the dominant phase. The two
+  phases have different bottlenecks — prefill is compute-bound, decode is
+  memory-bandwidth-bound — so the mix says which one you are paying for. (#29)
+- **SGLang metrics** — running/queued requests, KV (token-budget) usage, model
+  name, generation throughput and TTFT are now parsed from SGLang's Prometheus
+  endpoint; SGLang was detected as a runtime but showed no live numbers. (#9)
+- **`--llm-server <host:port>`** — scrape inference servers that
+  auto-discovery can't see: remote boxes, and macOS/Windows where the
+  `/proc`-based socket→PID mapping doesn't exist. Repeatable, also settable as
+  `llm_servers` in the config, IPv6 in bracket form. Manual targets are
+  labelled by address and get a longer scrape timeout than the localhost
+  sweep. (#13)
 - **Richer process detail** — the `Enter` overlay now also lists the selected
   process's **open files**, **network sockets** and **environment**, fetched
   lazily for just that PID while the overlay is open and dropped as soon as it

@@ -148,7 +148,20 @@ fn ai_view_renders() {
         waiting: Some(5.0),
         kv_pct: Some(64.0),
         ttft_ms: Some(180.0),
+        ttft: Some(toptop::metrics::Percentiles {
+            p50: 180.0,
+            p95: 520.0,
+            p99: 910.0,
+        }),
+        tpot: Some(toptop::metrics::Percentiles {
+            p50: 12.0,
+            p95: 28.0,
+            p99: 47.0,
+        }),
         gpu_offload_pct: None,
+        addr: None,
+        preemptions: Some(12.0),
+        preempt_rate: Some(1.2),
     }];
     render_at(&mut app, 100, 30);
     render_at(&mut app, 60, 14); // cramped
@@ -270,6 +283,27 @@ fn interaction_flow_is_stable() {
         app.rebuild_proc_view();
         render_at(&mut app, 120, 40);
     }
+
+    // Alert-history overlay: empty, then with transitions in it.
+    app.on_key(key(KeyCode::Char('A')));
+    assert!(app.show_alert_history);
+    render_at(&mut app, 120, 40);
+    {
+        use std::time::Instant;
+        use toptop::alerts::{Alert, Level};
+        let a = vec![Alert {
+            level: Level::Crit,
+            key: "gpu_throttle",
+            detail: "gpu0".into(),
+            message: "gpu0 is throttling (TestGPU)".into(),
+        }];
+        let now = Instant::now();
+        app.tracker.update(&a, now);
+        app.tracker.update(&[], now);
+    }
+    render_at(&mut app, 120, 40);
+    app.on_key(key(KeyCode::Esc));
+    assert!(!app.show_alert_history, "Esc peels the overlay back");
 
     // Detail overlay: fetches open files/env/sockets for the selection and
     // renders at both a roomy and a cramped size.

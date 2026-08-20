@@ -9,6 +9,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
+use std::time::Instant;
+
+use crate::alerts::{Level, TransitionState};
 use crate::app::{App, ProcColumn};
 use crate::metrics::ProcInfo;
 use crate::theme::Theme;
@@ -46,6 +49,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.show_detail {
         render_detail(f, area, app);
+    }
+    if app.show_alert_history {
+        render_alert_history(f, area, app);
     }
     if let Some(idx) = app.signal_menu {
         render_signal_menu(f, area, theme, idx, app);
@@ -1289,6 +1295,40 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 dim(theme),
             )));
         }
+        // Compute vs memory-bandwidth over time, mirrored around a midline.
+        // Token generation is bandwidth-bound once the model is resident, so
+        // the *divergence* between these two lines is the diagnosis: bandwidth
+        // pinned while compute idles means you are memory-bound, and no amount
+        // of a faster GPU core will help.
+        if let Some(h) = c.gpu_history.get(i) {
+            let graph_h = 4usize;
+            if h.compute.len() >= 2 && bw >= 12 && lines.len() + graph_h + 1 < inner.height as usize
+            {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {:<10}", "trend"), dim(theme)),
+                    Span::styled("compute ▲", Style::default().fg(theme.accent.color())),
+                    Span::styled("  /  ", dim(theme)),
+                    Span::styled("▼ bandwidth", Style::default().fg(theme.accent2.color())),
+                ]));
+                // Only the visible window, so the graph scrolls with time
+                // instead of squeezing an ever-longer history into `bw` cells.
+                let (compute, bandwidth) = (h.compute.tail(bw * 2), h.bandwidth.tail(bw * 2));
+                for line in graph::mirror_graph(
+                    &compute,
+                    &bandwidth,
+                    100.0,
+                    bw,
+                    graph_h,
+                    theme.accent.color(),
+                    theme.accent2.color(),
+                ) {
+                    let mut spans = vec![Span::styled("            ", dim(theme))];
+                    spans.extend(line.spans);
+                    lines.push(Line::from(spans));
+                }
+            }
+        }
+
         lines.push(Line::from(Span::raw("")));
     }
 
@@ -1348,7 +1388,7 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 break;
             }
             let mut head = vec![Span::styled(
-                format!("  {} :{}", sv.runtime, sv.port),
+                format!("  {}", sv.label()),
                 Style::default()
                     .fg(theme.accent2.color())
                     .add_modifier(Modifier::BOLD),
@@ -1383,7 +1423,10 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 }
             }
             if let Some(p) = sv.prompt_tps {
-                stat.push(Span::styled(format!("  prefill {:.0}/s", p), dim(theme)));
+                stat.push(Span::styled(
+                    format!("  prefill {:.0}/s", p),
+                    Style::default().fg(theme.accent2.color()),
+                ));
             }
             if let Some(k) = sv.kv_pct {
                 stat.push(Span::styled(
@@ -1397,11 +1440,85 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                     dim(theme),
                 ));
             }
-            if let Some(t) = sv.ttft_ms {
+            // Preemption is the signal nothing else surfaces: the server threw
+            // away work it had already done because the KV cache ran out.
+            // Throughput collapses while the GPU still looks busy.
+            if let Some(rate) = sv.preempt_rate.filter(|r| *r > 0.0) {
+                stat.push(Span::styled(
+                    format!("  ⟲ preempt {rate:.1}/s"),
+                    Style::default()
+                        .fg(theme.grad(1.0))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else if let Some(total) = sv.preemptions.filter(|t| *t > 0.0) {
+                // Not preempting now, but it has — worth knowing this server
+                // has been under KV pressure at some point.
+                stat.push(Span::styled(format!("  ⟲ {total:.0} total"), dim(theme)));
+            }
+            // Only fall back to the mean TTFT when no histogram was available;
+            // the percentile line below says strictly more.
+            if let (Some(t), None) = (sv.ttft_ms, sv.ttft) {
                 stat.push(Span::styled(format!("  ttft {:.0}ms", t), dim(theme)));
             }
             if stat.len() > 1 {
                 lines.push(Line::from(stat));
+            }
+
+            // Prefill vs decode as a first-class split: the two phases have
+            // different bottlenecks (prefill is compute-bound, decode is
+            // memory-bandwidth-bound), so the mix is what tells you which one
+            // you are currently paying for.
+            if let (Some(share), true) = (sv.prefill_share_pct(), lines.len() + 1 < cap) {
+                let decode = 100.0 - share;
+                let (phase, pct) = if share >= decode {
+                    ("prefill", share)
+                } else {
+                    ("decode", decode)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("    phase  ", dim(theme)),
+                    Span::styled(
+                        format!("prefill {share:.0}%"),
+                        Style::default().fg(theme.accent2.color()),
+                    ),
+                    Span::styled(" · ", dim(theme)),
+                    Span::styled(
+                        format!("decode {decode:.0}%"),
+                        Style::default().fg(theme.grad(0.0)),
+                    ),
+                    Span::styled(
+                        format!("  — {phase}-dominated ({pct:.0}% of tokens)"),
+                        dim(theme),
+                    ),
+                ]));
+            }
+
+            // The SLO triad: TTFT is how long until something appears, TPOT is
+            // how fast it then streams. p95/p99 are what users actually feel.
+            for (name, p) in [("ttft", sv.ttft), ("tpot", sv.tpot)] {
+                let Some(p) = p else { continue };
+                if lines.len() + 1 >= cap {
+                    break;
+                }
+                // Scale the color by how far p95 drifts from p50: a long tail
+                // is the interesting signal, not the absolute number.
+                let spread = if p.p50 > 0.0 {
+                    ((p.p95 / p.p50 - 1.0) / 3.0).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {name:<6} "), dim(theme)),
+                    Span::styled(
+                        format!("p50 {:.0}ms", p.p50),
+                        Style::default().fg(theme.fg.color()),
+                    ),
+                    Span::styled(
+                        format!("  p95 {:.0}ms", p.p95),
+                        Style::default().fg(theme.grad(spread as f32)),
+                    ),
+                    Span::styled(format!("  p99 {:.0}ms", p.p99), dim(theme)),
+                ]));
             }
 
             // Trend sparklines (nvtop-style): tokens/sec against its own peak,
@@ -1657,6 +1774,82 @@ fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(table, inner);
 }
 
+/// Timeline of recent alert fire/resolve transitions, newest first.
+///
+/// The banner only ever shows what is firing *right now*; this is the "what
+/// happened while I wasn't looking" view, and it is where flap suppression
+/// becomes visible as a count rather than as silence.
+fn render_alert_history(f: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme();
+    let history = app.tracker.history();
+    let suppressed = app.tracker.suppressed();
+
+    let rect = centered(area, 78, (history.len().clamp(1, 16) + 4) as u16);
+    f.render_widget(Clear, rect);
+    let title = if suppressed > 0 {
+        format!(
+            "alert history · {} events · {suppressed} flap{} suppressed",
+            history.len(),
+            if suppressed == 1 { "" } else { "s" }
+        )
+    } else {
+        format!("alert history · {} events", history.len())
+    };
+    let block = panel(&title, theme);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    if inner.height == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    if history.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No alerts have fired since toptop started.",
+            dim(theme),
+        )));
+    } else {
+        let now = Instant::now();
+        let rows = (inner.height as usize).saturating_sub(1);
+        for t in history.iter().rev().take(rows) {
+            let (marker, style) = match t.state {
+                TransitionState::Fired => (
+                    "▲ fired   ",
+                    Style::default().fg(match t.level {
+                        Level::Crit => theme.grad(1.0),
+                        Level::Warn => theme.grad(0.55),
+                    }),
+                ),
+                TransitionState::Resolved => {
+                    ("▼ resolved", Style::default().fg(theme.net_down.color()))
+                }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>5}  ", compact_age(now, t.at)), dim(theme)),
+                Span::styled(marker, style),
+                Span::styled(
+                    format!("  {}", t.message),
+                    Style::default().fg(theme.fg.color()),
+                ),
+            ]));
+        }
+    }
+    lines.push(Line::from(Span::styled("Esc/A to close", dim(theme))));
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Compact relative age, e.g. `12s`, `4m`, `2h`.
+fn compact_age(now: Instant, then: Instant) -> String {
+    let secs = now.saturating_duration_since(then).as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h", secs / 3600)
+    }
+}
+
 fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
     let rect = centered(area, 56, 26);
     f.render_widget(Clear, rect);
@@ -1684,6 +1877,7 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("t", "toggle process tree"),
         ("e", "toggle per-core CPU meters"),
         ("a", "AI / local-LLM GPU view"),
+        ("A", "alert history timeline"),
         ("n", "network connections"),
         ("L", "cycle layout preset"),
         ("/", "filter processes"),
