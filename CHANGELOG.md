@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The empty AI view points at `--demo`.** Opening it on a machine with no GPU
+  explained that there was no GPU and stopped there; nobody would guess the
+  whole view can be demonstrated without one. It now says so — except while the
+  demo is already running.
+
 ### Fixed
 
 - **`--demo`'s compute-vs-bandwidth trend plotted the host's GPU**, not the

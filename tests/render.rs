@@ -774,3 +774,26 @@ fn the_ai_view_leads_with_a_diagnosis() {
         "the advice was clipped before its end:\n{joined}"
     );
 }
+
+/// Opening the AI view on a machine with no GPU must point somewhere, not just
+/// report emptiness — `--demo` is the whole answer and nobody would guess it.
+#[test]
+fn the_empty_ai_view_points_at_the_demo() {
+    let mut app = App::new(&Config::default());
+    app.collector.gpus.clear();
+    app.show_ai = true;
+    let screen = render_text(&mut app, 110, 34).join("\n");
+    assert!(
+        screen.contains("toptop --demo"),
+        "no way out of an empty AI view:\n{screen}"
+    );
+
+    // …but not while the demo is already running, which would be absurd.
+    app.demo = true;
+    app.collector.gpus.clear();
+    let screen = render_text(&mut app, 110, 34).join("\n");
+    assert!(
+        !screen.contains("toptop --demo"),
+        "suggested the demo during the demo"
+    );
+}

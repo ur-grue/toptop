@@ -1370,6 +1370,20 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
             "AI workloads and inference servers still show below.",
             dim(theme),
         )));
+        // Someone who opens this view and finds it empty has no reason to
+        // guess that the whole thing can be demonstrated without a GPU.
+        if !app.demo {
+            lines.push(Line::from(vec![
+                Span::styled("Run ", dim(theme)),
+                Span::styled(
+                    "toptop --demo",
+                    Style::default()
+                        .fg(theme.accent.color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" to see this view with a simulated GPU.", dim(theme)),
+            ]));
+        }
         lines.push(Line::from(Span::raw("")));
     }
 
