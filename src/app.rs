@@ -137,6 +137,24 @@ impl ProcColumn {
         }
     }
 
+    /// Drop priority when the terminal is too narrow for every column: higher
+    /// goes first. PID and the command line are what make a row identifiable
+    /// at all, so they are never dropped; CPU and memory are why you are
+    /// looking. USER and the padding columns go first.
+    fn drop_priority(self) -> u8 {
+        match self {
+            ProcColumn::Pid | ProcColumn::Command => 0, // never dropped
+            ProcColumn::Cpu => 1,
+            ProcColumn::MemPct => 2,
+            ProcColumn::Mem => 3,
+            ProcColumn::State => 4,
+            ProcColumn::Vram => 5,
+            ProcColumn::Disk => 6,
+            ProcColumn::Time => 7,
+            ProcColumn::User => 8,
+        }
+    }
+
     /// Sort field a click on this header selects, if the column is sortable.
     pub fn sort_field(self) -> Option<SortField> {
         match self {
@@ -167,6 +185,38 @@ impl ProcColumn {
             _ => None,
         }
     }
+}
+
+/// Narrow `columns` until they fit `width` cells, dropping the least useful
+/// ones first (see [`ProcColumn::drop_priority`]).
+///
+/// Squeezing ten columns into a 40-cell terminal produces a row of unreadable
+/// stubs — `PI USE CP ME ME DIS VR TI S` — where every column is useless.
+/// Dropping some so the rest stay legible is strictly better, and the ones
+/// that identify the process are never among them.
+pub fn fit_columns(columns: &[ProcColumn], width: u16) -> Vec<ProcColumn> {
+    // Every fixed column costs its width plus one cell of spacing, and the
+    // command column needs a usable minimum of its own.
+    const COMMAND_MIN: u16 = 12;
+    let cost = |c: &ProcColumn| c.width().map(|w| w + 1).unwrap_or(COMMAND_MIN + 1);
+
+    let mut kept: Vec<ProcColumn> = columns.to_vec();
+    let total = |cols: &[ProcColumn]| -> u16 { cols.iter().map(cost).sum() };
+
+    while total(&kept) > width && kept.len() > 1 {
+        // Drop the highest-priority droppable column; stop if only
+        // never-dropped ones remain.
+        let Some((idx, _)) = kept
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.drop_priority() > 0)
+            .max_by_key(|(_, c)| c.drop_priority())
+        else {
+            break;
+        };
+        kept.remove(idx);
+    }
+    kept
 }
 
 /// Sort key for the combined per-process I/O rate.
@@ -259,6 +309,9 @@ pub struct App {
     pub sort_desc: bool,
     /// Process-table columns, in display order (from the config).
     pub columns: Vec<ProcColumn>,
+    /// The subset actually drawn at the current width, captured at render time
+    /// so click-to-sort maps against what the user can see.
+    pub visible_columns: Vec<ProcColumn>,
     /// Key → action bindings (from the config).
     pub keys: KeyMap,
     pub filter: String,
@@ -337,6 +390,7 @@ impl App {
             sort: SortField::Cpu,
             sort_desc: true,
             columns: cfg.columns.clone(),
+            visible_columns: cfg.columns.clone(),
             keys: cfg.keys.clone(),
             filter: String::new(),
             filter_mode: false,
@@ -1015,7 +1069,7 @@ impl App {
                 let area = self.proc_area;
                 // Header row sits one line above the data rows: click to sort.
                 if area.height > 0 && ev.row + 1 == area.y && ev.column >= area.x {
-                    if let Some(field) = header_sort_at(&self.columns, ev.column - area.x) {
+                    if let Some(field) = header_sort_at(&self.visible_columns, ev.column - area.x) {
                         if self.sort == field {
                             self.sort_desc = !self.sort_desc;
                         } else {
@@ -1123,6 +1177,53 @@ mod tests {
         app.on_key(key(KeyCode::Char('i')));
         assert!(!app.sort_desc);
         assert_eq!(pids(&app), vec![1, 3, 2]);
+    }
+
+    #[test]
+    fn narrow_terminals_drop_columns_by_priority() {
+        let all = DEFAULT_COLUMNS;
+
+        // Wide enough for everything: nothing is dropped.
+        assert_eq!(fit_columns(all, 200), all.to_vec());
+
+        // Progressively narrower keeps a strictly shrinking subset.
+        let mut previous = all.len() + 1;
+        for width in [120u16, 100, 80, 60, 50, 40, 30, 20] {
+            let kept = fit_columns(all, width);
+            assert!(
+                kept.len() <= previous,
+                "width {width} kept more columns than a wider terminal"
+            );
+            previous = kept.len();
+
+            // The two columns that identify a row survive every width.
+            assert!(
+                kept.contains(&ProcColumn::Pid),
+                "PID dropped at width {width}"
+            );
+            assert!(
+                kept.contains(&ProcColumn::Command),
+                "COMMAND dropped at width {width}"
+            );
+            // Order is never shuffled, only thinned.
+            let order: Vec<_> = all.iter().filter(|c| kept.contains(c)).copied().collect();
+            assert_eq!(kept, order, "column order changed at width {width}");
+        }
+
+        // USER goes before CPU%: you look at a process monitor for load.
+        let narrow = fit_columns(all, 45);
+        assert!(narrow.contains(&ProcColumn::Cpu));
+        assert!(!narrow.contains(&ProcColumn::User));
+    }
+
+    #[test]
+    fn click_to_sort_follows_the_visible_columns() {
+        // After dropping USER, the second column is CPU%, and a click there
+        // must sort by CPU rather than by whatever used to be at that offset.
+        let narrow = fit_columns(DEFAULT_COLUMNS, 45);
+        assert_eq!(narrow[0], ProcColumn::Pid);
+        assert_eq!(header_sort_at(&narrow, 0), Some(SortField::Pid));
+        assert_eq!(header_sort_at(&narrow, 8), Some(SortField::Cpu));
     }
 
     #[test]

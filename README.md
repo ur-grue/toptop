@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-177%20green-success)
+![Tests](https://img.shields.io/badge/tests-180%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -600,6 +600,11 @@ columns = pid, cpu, mem%, vram, command
 Available: `pid` · `user` · `cpu` · `mem%` · `mem` · `disk` · `vram` · `time` ·
 `state` · `command`. Unknown names are ignored; the header, the rows and
 click‑to‑sort all follow the configured set.
+
+On a terminal too narrow for the configured set, columns are **dropped rather
+than squeezed** — `USER`, `TIME` and `DISK` go first, and `PID` and `COMMAND`
+never go at all, so a row stays identifiable. Ten columns crammed into 40 cells
+is ten useless columns; four readable ones are strictly better.
 
 ### Keybindings
 

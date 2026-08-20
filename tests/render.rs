@@ -693,6 +693,43 @@ fn the_ai_view_wraps_instead_of_clipping() {
     );
 }
 
+/// A narrow terminal must show fewer, readable columns rather than ten
+/// unreadable stubs.
+#[test]
+fn the_process_table_drops_columns_when_narrow() {
+    let mut app = App::new(&Config::default());
+
+    let wide = render_text(&mut app, 120, 12);
+    let wide_header = wide
+        .iter()
+        .find(|l| l.contains("PID"))
+        .expect("header")
+        .clone();
+    assert!(wide_header.contains("USER"), "wide: {wide_header:?}");
+    assert!(wide_header.contains("COMMAND"), "wide: {wide_header:?}");
+
+    let narrow = render_text(&mut app, 44, 12);
+    let narrow_header = narrow
+        .iter()
+        .find(|l| l.contains("PID"))
+        .expect("header")
+        .clone();
+    // Fewer columns, but still the ones that identify and rank a process.
+    assert!(!narrow_header.contains("USER"), "narrow: {narrow_header:?}");
+    assert!(narrow_header.contains("CPU%"), "narrow: {narrow_header:?}");
+    assert!(
+        narrow_header.contains("COMMAND"),
+        "narrow: {narrow_header:?}"
+    );
+    // And no truncated stubs: every retained heading is intact.
+    for heading in ["PID", "CPU%", "COMMAND"] {
+        assert!(
+            narrow_header.contains(heading),
+            "{heading} was clipped: {narrow_header:?}"
+        );
+    }
+}
+
 /// The diagnosis panel must state a verdict, its evidence and its advice — and
 /// wrap the advice rather than clipping it.
 #[test]
