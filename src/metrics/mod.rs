@@ -556,6 +556,7 @@ impl Collector {
     /// Send a signal to a process, distinguishing the ways it can fail so the
     /// UI can explain what happened instead of a blanket "failed". Uses the
     /// raw `kill(2)` so the exact errno separates permission from liveness.
+    #[cfg(unix)]
     pub fn signal_process(&self, pid: u32, signal: Signal) -> SignalOutcome {
         let Some(raw) = raw_signal(signal) else {
             return SignalOutcome::Unsupported;
@@ -578,6 +579,7 @@ impl Collector {
     /// `signal_process`'s outcome classification via the raw `setpriority(2)`
     /// errno — raising priority (a lower nice) or renicing another user's
     /// process needs privilege.
+    #[cfg(unix)]
     pub fn set_priority(&self, pid: u32, nice: i32) -> PriorityOutcome {
         // SAFETY: setpriority() only inspects its integer arguments; we read
         // errno via last_os_error() only when it fails.
@@ -590,6 +592,28 @@ impl Collector {
             Some(libc::ESRCH) => PriorityOutcome::Gone,
             _ => PriorityOutcome::Gone,
         }
+    }
+
+    /// Windows has no signals: sysinfo maps what it can onto `TerminateProcess`
+    /// and reports the rest as unsupported, which the UI already renders.
+    #[cfg(windows)]
+    pub fn signal_process(&self, pid: u32, signal: Signal) -> SignalOutcome {
+        let Some(proc) = self.sys.process(Pid::from_u32(pid)) else {
+            return SignalOutcome::Gone;
+        };
+        match proc.kill_with(signal) {
+            Some(true) => SignalOutcome::Delivered,
+            Some(false) => SignalOutcome::NotPermitted,
+            None => SignalOutcome::Unsupported,
+        }
+    }
+
+    /// Windows scheduling priorities are process-class based, not nice values;
+    /// until that is mapped properly the renice menu reports it as unsupported
+    /// rather than silently doing nothing.
+    #[cfg(windows)]
+    pub fn set_priority(&self, _pid: u32, _nice: i32) -> PriorityOutcome {
+        PriorityOutcome::Unsupported
     }
 
     /// Resolve the executable path and working directory for a single process,
@@ -610,9 +634,11 @@ impl Collector {
 }
 
 /// The signals offered by the interactive menu, in display order: label,
-/// platform signal number (straight from libc), and the sysinfo `Signal`.
-/// Single source of truth — the menu, status line, and delivery all derive
-/// from this, so a new signal is added in exactly one place.
+/// platform signal number (straight from libc, `0` where the platform has no
+/// number), and the sysinfo `Signal`. Single source of truth — the menu,
+/// status line, and delivery all derive from this, so a new signal is added in
+/// exactly one place.
+#[cfg(unix)]
 pub const SIGNALS: &[(&str, i32, Signal)] = &[
     ("SIGTERM", libc::SIGTERM, Signal::Term),
     ("SIGKILL", libc::SIGKILL, Signal::Kill),
@@ -625,6 +651,11 @@ pub const SIGNALS: &[(&str, i32, Signal)] = &[
     ("SIGUSR2", libc::SIGUSR2, Signal::User2),
 ];
 
+/// Windows only offers process termination — everything else would be listed
+/// in the menu just to fail, so it isn't listed at all.
+#[cfg(windows)]
+pub const SIGNALS: &[(&str, i32, Signal)] = &[("Terminate", 0, Signal::Kill)];
+
 /// Human label for a signal, or "signal" if it isn't one the menu offers.
 pub fn signal_name(sig: Signal) -> &'static str {
     SIGNALS
@@ -635,6 +666,7 @@ pub fn signal_name(sig: Signal) -> &'static str {
 }
 
 /// Platform signal number for a signal, or `None` if we don't deliver it.
+#[cfg(unix)]
 fn raw_signal(sig: Signal) -> Option<i32> {
     SIGNALS
         .iter()
@@ -662,6 +694,8 @@ pub enum PriorityOutcome {
     Applied,
     /// The caller lacks privilege (raising priority, or another user's process).
     NotPermitted,
+    /// This platform has no nice values (Windows).
+    Unsupported,
     /// The process no longer exists.
     Gone,
 }
@@ -674,7 +708,8 @@ fn pct(part: u64, whole: u64) -> f32 {
     }
 }
 
-/// Read the first battery from `/sys/class/power_supply`, if any.
+/// Read the first battery from `/sys/class/power_supply`, if any. Linux only;
+/// other platforms simply find no directory and report no battery.
 fn read_battery() -> Option<Battery> {
     let dir = std::fs::read_dir("/sys/class/power_supply").ok()?;
     for entry in dir.flatten() {

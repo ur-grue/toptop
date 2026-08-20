@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Basic Windows support** — toptop now builds and runs on Windows, with a
+  `windows-latest` build+test job in CI to keep it that way. `libc` became a
+  Unix-only dependency; signal delivery and renicing are split per platform
+  (Windows goes through the sysinfo process API, offers *Terminate* only, and
+  reports renicing as unsupported rather than silently doing nothing). The
+  `/proc`-based connections inspector and inference-server discovery stay
+  Linux-only but now explain themselves instead of rendering an empty panel —
+  on macOS too. Native Windows equivalents remain open. (#45, partial)
+
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
   Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus
   tokens/sec from its counters), the `mlc-llm` launcher spelling (base MLC

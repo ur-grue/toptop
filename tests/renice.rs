@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Renice: changing a process's scheduling priority.
 
 use std::process::Command;
