@@ -148,7 +148,20 @@ fn ai_view_renders() {
         waiting: Some(5.0),
         kv_pct: Some(64.0),
         ttft_ms: Some(180.0),
+        ttft: Some(toptop::metrics::Percentiles {
+            p50: 180.0,
+            p95: 520.0,
+            p99: 910.0,
+        }),
+        tpot: Some(toptop::metrics::Percentiles {
+            p50: 12.0,
+            p95: 28.0,
+            p99: 47.0,
+        }),
         gpu_offload_pct: None,
+        addr: None,
+        preemptions: Some(12.0),
+        preempt_rate: Some(1.2),
     }];
     render_at(&mut app, 100, 30);
     render_at(&mut app, 60, 14); // cramped
@@ -230,16 +243,22 @@ fn connections_collect_without_panic() {
 
 #[test]
 fn header_sort_mapping() {
-    use toptop::app::{header_sort_at, SortField};
-    assert_eq!(header_sort_at(0), Some(SortField::Pid));
-    assert_eq!(header_sort_at(10), Some(SortField::User));
-    assert_eq!(header_sort_at(20), Some(SortField::Cpu));
-    assert_eq!(header_sort_at(26), Some(SortField::Mem));
-    assert_eq!(header_sort_at(40), Some(SortField::Io));
-    assert_eq!(header_sort_at(50), Some(SortField::Gpu));
-    assert_eq!(header_sort_at(58), Some(SortField::Time));
-    assert_eq!(header_sort_at(63), None);
-    assert_eq!(header_sort_at(70), Some(SortField::Name));
+    use toptop::app::{header_sort_at, SortField, DEFAULT_COLUMNS as C};
+    assert_eq!(header_sort_at(C, 0), Some(SortField::Pid));
+    assert_eq!(header_sort_at(C, 10), Some(SortField::User));
+    assert_eq!(header_sort_at(C, 20), Some(SortField::Cpu));
+    assert_eq!(header_sort_at(C, 26), Some(SortField::Mem));
+    assert_eq!(header_sort_at(C, 40), Some(SortField::Io));
+    assert_eq!(header_sort_at(C, 50), Some(SortField::Gpu));
+    assert_eq!(header_sort_at(C, 58), Some(SortField::Time));
+    assert_eq!(header_sort_at(C, 63), None);
+    assert_eq!(header_sort_at(C, 70), Some(SortField::Name));
+
+    // A custom column set remaps the ranges: pid(7+1) then command takes the rest.
+    use toptop::app::ProcColumn;
+    let custom = &[ProcColumn::Pid, ProcColumn::Command];
+    assert_eq!(header_sort_at(custom, 0), Some(SortField::Pid));
+    assert_eq!(header_sort_at(custom, 9), Some(SortField::Name));
 }
 
 #[test]
@@ -265,6 +284,44 @@ fn interaction_flow_is_stable() {
         render_at(&mut app, 120, 40);
     }
 
+    // Alert-history overlay: empty, then with transitions in it.
+    app.on_key(key(KeyCode::Char('A')));
+    assert!(app.show_alert_history);
+    render_at(&mut app, 120, 40);
+    {
+        use std::time::Instant;
+        use toptop::alerts::{Alert, Level};
+        let a = vec![Alert {
+            level: Level::Crit,
+            key: "gpu_throttle",
+            detail: "gpu0".into(),
+            message: "gpu0 is throttling (TestGPU)".into(),
+        }];
+        let now = Instant::now();
+        app.tracker.update(&a, now);
+        app.tracker.update(&[], now);
+    }
+    render_at(&mut app, 120, 40);
+    app.on_key(key(KeyCode::Esc));
+    assert!(!app.show_alert_history, "Esc peels the overlay back");
+
+    // Detail overlay: fetches open files/env/sockets for the selection and
+    // renders at both a roomy and a cramped size.
+    app.on_key(key(KeyCode::Enter));
+    assert!(app.show_detail);
+    assert!(
+        app.detail.is_some(),
+        "detail is fetched as the overlay opens"
+    );
+    render_at(&mut app, 120, 40);
+    render_at(&mut app, 62, 16); // cramped: sections must not overflow
+    app.on_key(key(KeyCode::Enter));
+    assert!(!app.show_detail);
+    assert!(
+        app.detail.is_none(),
+        "detail is dropped when the overlay closes"
+    );
+
     // Filter entry typing path.
     app.on_key(key(KeyCode::Char('/')));
     for c in "kernel".chars() {
@@ -276,7 +333,7 @@ fn interaction_flow_is_stable() {
     assert!(app.filter.is_empty());
 
     // Cycle through every theme and re-render.
-    for _ in 0..toptop::theme::THEMES.len() + 1 {
+    for _ in 0..toptop::theme::themes().len() + 1 {
         app.on_key(key(KeyCode::Char('p')));
         render_at(&mut app, 120, 40);
     }
@@ -350,4 +407,206 @@ fn quit_keys_work() {
     let mut app = App::new(&Config::default());
     app.on_key(key(KeyCode::Char('q')));
     assert!(app.should_quit);
+}
+
+/// The flight recorder end to end: record real ticks to a file, load it back
+/// as a replay, and drive the TUI off the recording.
+#[test]
+fn record_then_replay_drives_the_tui() {
+    use toptop::record::{Recorder, Replay};
+
+    let path = std::env::temp_dir().join(format!("toptop-replay-{}.jsonl", std::process::id()));
+    std::fs::remove_file(&path).ok();
+
+    // Record three ticks through the app, exactly as --record does.
+    {
+        let mut app = App::new(&Config::default());
+        app.recorder = Some(Recorder::create(&path).expect("create recording"));
+        for _ in 0..3 {
+            app.on_tick();
+        }
+        assert!(app.recorder.is_some(), "recording must not have aborted");
+    }
+
+    let replay = Replay::load(&path).expect("load the recording we just wrote");
+    assert_eq!(replay.len(), 3);
+    assert_eq!(replay.skipped, 0);
+
+    // Replay it: the app must render every frame and never touch live metrics.
+    let mut app = App::new(&Config::default());
+    app.replay = Some(replay);
+    let hostname_before = app.collector.host.hostname.clone();
+    for _ in 0..5 {
+        app.on_tick();
+        render_at(&mut app, 110, 36);
+    }
+    // Playback clamps at the last frame instead of wrapping.
+    assert_eq!(app.replay.as_ref().unwrap().position(), 2);
+    assert_eq!(app.collector.host.hostname, hostname_before);
+
+    // Scrubbing: ←/→ step and imply pause.
+    app.on_key(key(KeyCode::Left));
+    assert!(app.paused, "stepping pauses playback");
+    assert_eq!(app.replay.as_ref().unwrap().position(), 1);
+    render_at(&mut app, 110, 36);
+    app.on_key(key(KeyCode::Right));
+    assert_eq!(app.replay.as_ref().unwrap().position(), 2);
+    // Paused playback stays put.
+    app.on_tick();
+    assert_eq!(app.replay.as_ref().unwrap().position(), 2);
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// Render into a buffer and return it as lines of text, so tests can assert on
+/// what a user actually sees rather than only that nothing panicked.
+fn render_text(app: &mut App, w: u16, h: u16) -> Vec<String> {
+    let backend = TestBackend::new(w, h);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|f| ui::draw(f, app)).expect("draw");
+    let buf = terminal.backend().buffer().clone();
+    (0..h)
+        .map(|y| {
+            (0..w)
+                .map(|x| buf[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn unified_memory_gpus_are_not_shown_as_zero_bytes() {
+    let mut app = App::new(&Config::default());
+    // Apple Silicon: no discrete VRAM, and no temperature reported.
+    app.collector.gpus = vec![toptop::metrics::gpu::Gpu {
+        name: "Apple M3".into(),
+        util_pct: 12.0,
+        has_util: true,
+        mem_util: 0.0,
+        has_mem_util: false,
+        mem_used: 0,
+        mem_total: 0,
+        temp: 0.0,
+        power: 0.0,
+        power_limit: 0.0,
+        throttled: false,
+    }];
+    let screen = render_text(&mut app, 120, 40);
+
+    // Scope the assertions to the GPU panel's own rows. A machine with no swap
+    // legitimately renders "swp 0 B / 0 B" in the memory panel, and a host GPU
+    // may well be at a real temperature — a whole-screen search would blame
+    // this code for either.
+    let gpu_rows: String = screen
+        .iter()
+        .skip_while(|l| !l.contains("gpu0"))
+        .take(2)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !gpu_rows.is_empty(),
+        "no GPU rows rendered:\n{}",
+        screen.join("\n")
+    );
+
+    assert!(
+        gpu_rows.contains("unified memory"),
+        "a unified-memory GPU should say so:\n{gpu_rows}"
+    );
+    assert!(
+        !gpu_rows.contains("0 B / 0 B"),
+        "0 B / 0 B reads as a broken driver, not a memory architecture:\n{gpu_rows}"
+    );
+    assert!(
+        !gpu_rows.contains("0°C"),
+        "a GPU reporting no temperature must not look suspiciously cool:\n{gpu_rows}"
+    );
+}
+
+#[test]
+fn the_header_never_cuts_a_segment_in_half() {
+    let mut app = App::new(&Config::default());
+    // Widths around where segments start dropping out.
+    for w in [40u16, 60, 72, 88, 100, 116, 140] {
+        let header = render_text(&mut app, w, 12).remove(0);
+        assert!(
+            header.chars().count() <= w as usize,
+            "header overflows at width {w}"
+        );
+        // "tasks" is the last segment before the clock; if it appears at all,
+        // it must appear whole rather than as "563 tasks, 301 r".
+        if let Some(rest) = header.split("tasks, ").nth(1) {
+            assert!(
+                rest.starts_with(|c: char| c.is_ascii_digit()) && rest.contains("run"),
+                "header cut mid-segment at width {w}: {header:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_ai_overlay_has_no_dead_space() {
+    let mut app = App::new(&Config::default());
+    app.collector.gpus = vec![toptop::metrics::gpu::Gpu {
+        name: "NVIDIA GeForce RTX 4090".into(),
+        util_pct: 31.0,
+        has_util: true,
+        mem_util: 78.0,
+        has_mem_util: true,
+        mem_used: 22 * 1024 * 1024 * 1024,
+        mem_total: 24 * 1024 * 1024 * 1024,
+        temp: 72.0,
+        power: 290.0,
+        power_limit: 450.0,
+        throttled: false,
+    }];
+    app.show_ai = true;
+    let screen = render_text(&mut app, 116, 44);
+
+    // Find the overlay's top and bottom borders by their corner glyphs.
+    let top = screen
+        .iter()
+        .position(|l| l.contains("╭ AI ·"))
+        .expect("overlay top border");
+    let bottom = screen
+        .iter()
+        .skip(top)
+        .position(|l| l.contains('╰') && l.contains('╯'))
+        .expect("overlay bottom border")
+        + top;
+
+    // The row just above the bottom border must carry content — a panel sized
+    // to its content has no empty rows before its own border.
+    let last_row = &screen[bottom - 1];
+    let inside: String = last_row
+        .chars()
+        .skip_while(|c| *c != '│')
+        .skip(1)
+        .take_while(|c| *c != '│')
+        .collect();
+    assert!(
+        !inside.trim().is_empty(),
+        "the AI overlay ends in dead space (rows {top}..{bottom}):\n{}",
+        screen[top..=bottom].join("\n")
+    );
+}
+
+/// One physical filesystem mounted several times (macOS firmlinks, Linux bind
+/// mounts) must appear once — and, more importantly, must not have its I/O
+/// counted twice into the disk rates.
+#[test]
+fn duplicate_mounts_are_deduplicated() {
+    let c = toptop::metrics::Collector::new(16);
+    let mut seen = std::collections::HashSet::new();
+    for d in &c.disk_list {
+        assert!(
+            seen.insert((d.name.clone(), d.total)),
+            "device {:?} listed twice (mounts collapse to one row): {:#?}",
+            d.name,
+            c.disk_list.iter().map(|d| &d.mount).collect::<Vec<_>>()
+        );
+    }
 }

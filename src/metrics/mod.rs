@@ -18,8 +18,8 @@ pub mod netconn;
 
 use crate::history::History;
 use gpu::{Gpu, GpuMonitor, GpuProc};
-use infer::InferenceMonitor;
-pub use infer::ServerStats;
+use infer::{InferenceMonitor, Target};
+pub use infer::{Percentiles, ServerStats};
 pub use netconn::Connection;
 
 /// Static-ish information about the host, captured once at startup.
@@ -83,7 +83,7 @@ pub struct DiskInfo {
 }
 
 /// One process row.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct ProcInfo {
     pub pid: u32,
     pub ppid: Option<u32>,
@@ -111,7 +111,7 @@ pub struct ProcInfo {
 }
 
 /// A temperature sensor reading.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SensorInfo {
     pub label: String,
     pub temp: f32,
@@ -120,7 +120,7 @@ pub struct SensorInfo {
 }
 
 /// Battery state, read from `/sys/class/power_supply` when present.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Battery {
     pub percent: f32,
     pub status: String,
@@ -160,6 +160,11 @@ pub struct Collector {
     pub gpus: Vec<Gpu>,
     /// Processes holding GPU memory (NVIDIA only), for the AI/LLM view.
     pub gpu_procs: Vec<GpuProc>,
+    /// Per-GPU compute and memory-bandwidth history, indexed like `gpus`.
+    /// Token generation is bandwidth-bound once the model is resident, so the
+    /// *divergence* between these two lines over time is the single most
+    /// diagnostic picture toptop can draw.
+    pub gpu_history: Vec<GpuHistory>,
     /// Auto-discovered local inference servers (tokens/sec, KV cache, …).
     pub servers: Vec<ServerStats>,
     /// Per-server time series (keyed by pid+port) feeding the AI-view
@@ -167,6 +172,27 @@ pub struct Collector {
     pub server_history: std::collections::HashMap<(u32, u16), ServerHistory>,
     pub battery: Option<Battery>,
     pub uptime: u64,
+}
+
+/// Compute and memory-bandwidth utilization trends for one GPU.
+#[derive(Clone, Debug)]
+pub struct GpuHistory {
+    /// SM/compute utilization %, 0–100.
+    pub compute: History,
+    /// Memory-bandwidth utilization %, 0–100.
+    pub bandwidth: History,
+    /// VRAM used %, 0–100 — the spill story over time.
+    pub vram: History,
+}
+
+impl GpuHistory {
+    fn new(capacity: usize) -> Self {
+        Self {
+            compute: History::new(capacity),
+            bandwidth: History::new(capacity),
+            vram: History::new(capacity),
+        }
+    }
 }
 
 /// Tokens/sec and KV-cache trends for one inference server.
@@ -179,6 +205,12 @@ pub struct ServerHistory {
 impl Collector {
     /// Build a collector and perform an initial population pass.
     pub fn new(history_len: usize) -> Self {
+        Self::with_targets(history_len, Vec::new())
+    }
+
+    /// Build a collector that also scrapes manually configured inference
+    /// servers (`--llm-server`) alongside auto-discovered ones.
+    pub fn with_targets(history_len: usize, targets: Vec<Target>) -> Self {
         let refresh_kind = RefreshKind::nothing()
             .with_cpu(CpuRefreshKind::everything())
             .with_memory(MemoryRefreshKind::everything());
@@ -232,7 +264,8 @@ impl Collector {
             refresh_kind,
             proc_refresh,
             gpu_monitor: GpuMonitor::new(),
-            infer_monitor: InferenceMonitor::new(),
+            gpu_history: Vec::new(),
+            infer_monitor: InferenceMonitor::with_targets(targets),
             prev_proc_io: std::collections::HashMap::new(),
             last_instant: None,
             last_battery_at: None,
@@ -304,6 +337,7 @@ impl Collector {
                 p.gpu_mem = vram.get(&p.pid).copied().unwrap_or(0);
             }
         }
+        self.update_gpu_history();
         self.servers = self.infer_monitor.snapshot();
         self.update_server_history();
         // Battery level moves on the order of minutes; poll it at most this
@@ -321,6 +355,27 @@ impl Collector {
 
     /// Append this tick's tokens/sec and KV% to each live server's history,
     /// dropping the histories of servers that vanished.
+    /// Keep one history per GPU, resizing when GPUs appear or disappear.
+    /// A GPU that stops reporting utilization pushes 0 rather than nothing, so
+    /// the time axis stays honest — a gap would silently compress the graph.
+    fn update_gpu_history(&mut self) {
+        if self.gpu_history.len() != self.gpus.len() {
+            self.gpu_history = (0..self.gpus.len())
+                .map(|_| GpuHistory::new(self.history_len))
+                .collect();
+        }
+        for (g, h) in self.gpus.iter().zip(self.gpu_history.iter_mut()) {
+            h.compute
+                .push(if g.has_util { g.util_pct as f64 } else { 0.0 });
+            h.bandwidth.push(if g.has_mem_util {
+                g.mem_util as f64
+            } else {
+                0.0
+            });
+            h.vram.push(g.mem_pct() as f64);
+        }
+    }
+
     fn update_server_history(&mut self) {
         let live: std::collections::HashSet<(u32, u16)> =
             self.servers.iter().map(|s| (s.pid, s.port)).collect();
@@ -420,12 +475,22 @@ impl Collector {
         self.disk_list.clear();
         let mut total_read = 0u64;
         let mut total_write = 0u64;
+        // One physical filesystem can be mounted several times — macOS firmlinks
+        // (`/` and `/System/Volumes/Data`), Linux bind mounts, btrfs
+        // subvolumes. Listing it twice wastes a panel row, and *summing* its
+        // I/O twice inflates the read/write rates, so both are deduplicated on
+        // the device identity.
+        let mut seen: std::collections::HashSet<(String, u64)> = std::collections::HashSet::new();
         for disk in self.disks.list() {
             let total = disk.total_space();
             let available = disk.available_space();
             let used = total.saturating_sub(available);
+            let name = disk.name().to_string_lossy().to_string();
+            if !seen.insert((name.clone(), total)) {
+                continue;
+            }
             self.disk_list.push(DiskInfo {
-                name: disk.name().to_string_lossy().to_string(),
+                name,
                 mount: disk.mount_point().to_string_lossy().to_string(),
                 fs: disk.file_system().to_string_lossy().to_string(),
                 total,
@@ -437,7 +502,14 @@ impl Collector {
             total_read = total_read.saturating_add(usage.total_read_bytes);
             total_write = total_write.saturating_add(usage.total_written_bytes);
         }
-        self.disk_list.sort_by(|a, b| a.mount.cmp(&b.mount));
+        // Shortest mount first within a device, then alphabetically: `/` should
+        // outrank `/System/Volumes/Data` when both survive dedup.
+        self.disk_list.sort_by(|a, b| {
+            a.mount
+                .len()
+                .cmp(&b.mount.len())
+                .then(a.mount.cmp(&b.mount))
+        });
 
         if self.last_disk_read == 0 && self.last_disk_write == 0 {
             self.last_disk_read = total_read;
@@ -594,6 +666,51 @@ impl Collector {
         }
     }
 
+    /// Everything the detail overlay needs beyond the process row, fetched on
+    /// demand for one PID rather than cached for every row of the table.
+    ///
+    /// Each part degrades independently: environment comes from sysinfo (all
+    /// platforms), open files from `/proc/<pid>/fd` (Linux only), and sockets
+    /// are the global connection scan narrowed to this PID (Linux only). An
+    /// unreadable part yields an empty list, never an error — you routinely
+    /// lack permission for other users' processes.
+    pub fn proc_detail(&mut self, pid: u32) -> ProcDetail {
+        ProcDetail {
+            env: self.proc_env(pid),
+            open_files: proc_open_files(pid),
+            connections: self
+                .connections()
+                .into_iter()
+                .filter(|c| c.pid == Some(pid))
+                .collect(),
+        }
+    }
+
+    /// Read one process's environment, refreshing just that PID for it —
+    /// environments are large and change rarely, so they are deliberately not
+    /// part of the per-tick refresh.
+    fn proc_env(&mut self, pid: u32) -> Vec<(String, String)> {
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+            false,
+            ProcessRefreshKind::nothing().with_environ(UpdateKind::Always),
+        );
+        let Some(proc) = self.sys.process(Pid::from_u32(pid)) else {
+            return Vec::new();
+        };
+        let mut env: Vec<(String, String)> = proc
+            .environ()
+            .iter()
+            .filter_map(|e| {
+                let e = e.to_string_lossy();
+                let (k, v) = e.split_once('=')?;
+                Some((k.to_string(), v.to_string()))
+            })
+            .collect();
+        env.sort_by(|a, b| a.0.cmp(&b.0));
+        env
+    }
+
     /// Windows has no signals: sysinfo maps what it can onto `TerminateProcess`
     /// and reports the rest as unsupported, which the UI already renders.
     #[cfg(windows)]
@@ -672,6 +789,62 @@ fn raw_signal(sig: Signal) -> Option<i32> {
         .iter()
         .find(|(_, _, s)| *s == sig)
         .map(|(_, num, _)| *num)
+}
+
+/// One entry of `/proc/<pid>/fd`: the descriptor number and what it points at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenFile {
+    pub fd: u32,
+    /// Link target: a path, or a pseudo-target like `socket:[12345]`.
+    pub target: String,
+}
+
+impl OpenFile {
+    /// Whether this descriptor is a socket rather than a file on disk — those
+    /// are listed under connections instead, with their addresses resolved.
+    pub fn is_socket(&self) -> bool {
+        self.target.starts_with("socket:")
+    }
+
+    /// Whether this is a pipe, event fd or similar kernel pseudo-file.
+    pub fn is_pseudo(&self) -> bool {
+        self.target.starts_with("pipe:")
+            || self.target.starts_with("anon_inode:")
+            || self.is_socket()
+    }
+}
+
+/// On-demand detail for one process, backing the detail overlay.
+#[derive(Clone, Debug, Default)]
+pub struct ProcDetail {
+    /// Environment, sorted by key.
+    pub env: Vec<(String, String)>,
+    /// Open file descriptors, sorted by fd.
+    pub open_files: Vec<OpenFile>,
+    /// This process's network connections.
+    pub connections: Vec<Connection>,
+}
+
+/// Read `/proc/<pid>/fd` — Linux only; anywhere else this yields nothing.
+fn proc_open_files(pid: u32) -> Vec<OpenFile> {
+    let Ok(dir) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return Vec::new();
+    };
+    let mut out: Vec<OpenFile> = dir
+        .flatten()
+        .filter_map(|entry| {
+            let fd: u32 = entry.file_name().to_str()?.parse().ok()?;
+            // A descriptor can close between listing and reading it; skip it
+            // rather than showing a phantom entry.
+            let target = std::fs::read_link(entry.path()).ok()?;
+            Some(OpenFile {
+                fd,
+                target: target.to_string_lossy().to_string(),
+            })
+        })
+        .collect();
+    out.sort_by_key(|f| f.fd);
+    out
 }
 
 /// Outcome of attempting to deliver a signal to a process.
@@ -772,7 +945,99 @@ fn status_char(status: ProcessStatus) -> char {
 
 #[cfg(test)]
 mod tests {
+    use super::{OpenFile, ProcDetail};
+
+    #[test]
+    fn open_file_classification() {
+        let sock = OpenFile {
+            fd: 7,
+            target: "socket:[12345]".into(),
+        };
+        assert!(sock.is_socket() && sock.is_pseudo());
+        let pipe = OpenFile {
+            fd: 3,
+            target: "pipe:[999]".into(),
+        };
+        assert!(!pipe.is_socket() && pipe.is_pseudo());
+        let file = OpenFile {
+            fd: 4,
+            target: "/var/log/app.log".into(),
+        };
+        assert!(!file.is_socket() && !file.is_pseudo());
+    }
+
+    #[test]
+    fn proc_detail_defaults_are_empty() {
+        let d = ProcDetail::default();
+        assert!(d.env.is_empty() && d.open_files.is_empty() && d.connections.is_empty());
+    }
+
     use super::*;
+
+    fn fake_gpu(util: f32, mem_util: f32, used: u64, total: u64) -> gpu::Gpu {
+        gpu::Gpu {
+            name: "TestGPU".into(),
+            util_pct: util,
+            has_util: true,
+            mem_util,
+            has_mem_util: true,
+            mem_used: used,
+            mem_total: total,
+            temp: 60.0,
+            power: 200.0,
+            power_limit: 400.0,
+            throttled: false,
+        }
+    }
+
+    #[test]
+    fn gpu_history_tracks_compute_bandwidth_and_vram() {
+        let mut c = Collector::new(8);
+        c.gpus = vec![fake_gpu(90.0, 30.0, 50, 100)];
+        c.update_gpu_history();
+        c.gpus = vec![fake_gpu(20.0, 95.0, 90, 100)];
+        c.update_gpu_history();
+
+        assert_eq!(c.gpu_history.len(), 1);
+        let h = &c.gpu_history[0];
+        assert_eq!(h.compute.tail(2), vec![90.0, 20.0]);
+        // The divergence this graph exists to show: compute fell, bandwidth
+        // pinned — memory-bound, and a faster GPU core would not help.
+        assert_eq!(h.bandwidth.tail(2), vec![30.0, 95.0]);
+        assert_eq!(h.vram.tail(2), vec![50.0, 90.0]);
+    }
+
+    #[test]
+    fn gpu_history_resizes_when_gpus_come_and_go() {
+        let mut c = Collector::new(8);
+        c.gpus = vec![fake_gpu(50.0, 50.0, 1, 2), fake_gpu(50.0, 50.0, 1, 2)];
+        c.update_gpu_history();
+        assert_eq!(c.gpu_history.len(), 2);
+        // A GPU disappearing (driver reload, container restart) resizes rather
+        // than indexing past the end.
+        c.gpus.pop();
+        c.update_gpu_history();
+        assert_eq!(c.gpu_history.len(), 1);
+        c.gpus.clear();
+        c.update_gpu_history();
+        assert!(c.gpu_history.is_empty());
+    }
+
+    #[test]
+    fn gpu_without_utilization_still_advances_the_time_axis() {
+        let mut c = Collector::new(8);
+        let mut g = fake_gpu(0.0, 0.0, 10, 100);
+        g.has_util = false;
+        g.has_mem_util = false;
+        c.gpus = vec![g];
+        c.update_gpu_history();
+        let before = c.gpu_history[0].compute.len();
+        c.update_gpu_history();
+        // Pushing 0 rather than nothing keeps the time axis honest — a gap
+        // would silently compress the graph.
+        assert_eq!(c.gpu_history[0].compute.len(), before + 1);
+        assert_eq!(c.gpu_history[0].compute.last(), 0.0);
+    }
 
     #[test]
     fn server_history_tracks_and_prunes() {

@@ -16,7 +16,13 @@ fn main() {
     let h: u16 = args.next().and_then(|s| s.parse().ok()).unwrap_or(40);
 
     let overlay = std::env::args().nth(3).unwrap_or_default();
-    let mut app = App::new(&Config::default());
+    // Optional 4th arg: theme name, for eyeballing a palette.
+    let theme = std::env::args().nth(4).unwrap_or_default();
+    let mut cfg = Config::default();
+    if let Some(idx) = toptop::theme::index_by_name(&theme) {
+        cfg.theme_idx = idx;
+    }
+    let mut app = App::new(&cfg);
     // Take a couple of samples so meters and graphs have data.
     std::thread::sleep(std::time::Duration::from_millis(300));
     app.on_tick();
@@ -58,7 +64,20 @@ fn main() {
                 waiting: Some(5.0),
                 kv_pct: Some(64.0),
                 ttft_ms: Some(180.0),
+                ttft: Some(toptop::metrics::Percentiles {
+                    p50: 180.0,
+                    p95: 520.0,
+                    p99: 910.0,
+                }),
+                tpot: Some(toptop::metrics::Percentiles {
+                    p50: 12.0,
+                    p95: 28.0,
+                    p99: 47.0,
+                }),
                 gpu_offload_pct: None,
+                addr: None,
+                preemptions: Some(12.0),
+                preempt_rate: Some(1.2),
             }];
             app.alerts = toptop::alerts::evaluate(&app.collector, &app.alert_cfg);
         }
