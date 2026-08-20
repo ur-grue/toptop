@@ -9,7 +9,11 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::app::App;
+use std::time::Instant;
+
+use crate::alerts::{Level, TransitionState};
+use crate::app::{App, ProcColumn};
+use crate::metrics::ProcInfo;
 use crate::theme::Theme;
 use crate::util::{
     clamp_pct, compact_duration, human_bytes, human_duration, human_rate, short_bytes, truncate,
@@ -45,6 +49,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.show_detail {
         render_detail(f, area, app);
+    }
+    if app.show_alert_history {
+        render_alert_history(f, area, app);
     }
     if let Some(idx) = app.signal_menu {
         render_signal_menu(f, area, theme, idx, app);
@@ -117,6 +124,15 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::styled(format!("  {} tasks, {} run", tasks, running), dim(theme)),
     ];
+    // Recording is a persistent, easy-to-forget state — mark it unmissably.
+    if app.recorder.is_some() {
+        spans.push(Span::styled(
+            "  ● REC",
+            Style::default()
+                .fg(theme.grad(1.0))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if let Some(bat) = &c.battery {
         let t = (bat.percent / 100.0).clamp(0.0, 1.0);
         let glyph = if bat.status.eq_ignore_ascii_case("charging") {
@@ -157,6 +173,23 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     // Live clock, right-aligned — but only when it won't collide with the
     // left-hand status text (otherwise the two overlap on narrow terminals).
     let clock = chrono::Local::now().format("%H:%M:%S").to_string();
+
+    // Drop whole segments that don't fit rather than letting ratatui cut the
+    // last one mid-word ("563 tasks, 301 r"). Each span is a self-contained
+    // fact, so losing one entirely reads as a narrow terminal; half of one
+    // reads as a bug.
+    let mut budget = area.width as usize;
+    let mut fitted = Vec::with_capacity(spans.len());
+    for span in spans {
+        let len = span.content.chars().count();
+        if len > budget {
+            break;
+        }
+        budget -= len;
+        fitted.push(span);
+    }
+    let spans = fitted;
+
     let left_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
     let left = Paragraph::new(Line::from(spans));
     f.render_widget(left, area);
@@ -616,18 +649,37 @@ fn render_sensors(f: &mut Frame, area: Rect, app: &App) {
         } else {
             "  --".to_string()
         };
+        // A GPU that reports no temperature (Apple Silicon, most integrated
+        // GPUs) must not be rendered as a suspiciously cool 0 °C.
+        let temp_txt = if g.temp > 0.0 {
+            format!("{:>3.0}°C", g.temp)
+        } else {
+            "   —".to_string()
+        };
         spans.push(Span::styled(
-            format!(" {} {:>3.0}°C", util_txt, g.temp),
+            format!(" {util_txt} {temp_txt}"),
             Style::default().fg(theme.grad(u / 100.0)),
         ));
         lines.push(Line::from(spans));
         if lines.len() < cap {
-            lines.push(Line::from(Span::styled(
+            // Matches the AI view: unified-memory GPUs report no VRAM total,
+            // and "0 B / 0 B" reads like a broken driver rather than a
+            // different memory architecture.
+            let mem_txt = if g.mem_total > 0 {
                 format!(
-                    "  {} · vram {} / {}",
-                    truncate(&g.name, (inner.width as usize).saturating_sub(24)),
+                    " · vram {} / {}",
                     human_bytes(g.mem_used),
                     human_bytes(g.mem_total)
+                )
+            } else if g.name.contains("Apple") {
+                " · unified memory".to_string()
+            } else {
+                String::new()
+            };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "  {}{mem_txt}",
+                    truncate(&g.name, (inner.width as usize).saturating_sub(24)),
                 ),
                 dim(theme),
             )));
@@ -700,18 +752,13 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         height: rows_cap as u16,
     };
 
-    let header = Row::new(vec![
-        Cell::from("PID"),
-        Cell::from("USER"),
-        Cell::from("CPU%"),
-        Cell::from("MEM%"),
-        Cell::from("MEM"),
-        Cell::from("DISK"),
-        Cell::from("VRAM"),
-        Cell::from("TIME"),
-        Cell::from("S"),
-        Cell::from("COMMAND"),
-    ])
+    let columns = app.columns.clone();
+    let header = Row::new(
+        columns
+            .iter()
+            .map(|c| Cell::from(c.header()))
+            .collect::<Vec<_>>(),
+    )
     .style(
         Style::default()
             .fg(theme.accent.color())
@@ -728,41 +775,12 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
             p.cmd.clone()
         };
         let cpu = clamp_pct(p.cpu);
-        let row = Row::new(vec![
-            Cell::from(format!("{:>7}", p.pid)),
-            Cell::from(truncate(&p.user, 9)),
-            Cell::from(Span::styled(
-                format!("{:>5.1}", p.cpu.min(999.0)),
-                Style::default().fg(theme.grad(cpu / 100.0)),
-            )),
-            Cell::from(Span::styled(
-                format!("{:>5.1}", p.mem_pct),
-                Style::default().fg(theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0))),
-            )),
-            Cell::from(short_bytes(p.mem_bytes)),
-            Cell::from({
-                let io = p.io_read_rate + p.io_write_rate;
-                if io >= 1.0 {
-                    Span::styled(
-                        format!("{}/s", short_bytes(io as u64)),
-                        Style::default().fg(theme.disk_write.color()),
-                    )
-                } else {
-                    Span::styled("·", dim(theme))
-                }
-            }),
-            Cell::from(if p.gpu_mem > 0 {
-                Span::styled(
-                    short_bytes(p.gpu_mem),
-                    Style::default().fg(theme.accent2.color()),
-                )
-            } else {
-                Span::styled("·", dim(theme))
-            }),
-            Cell::from(compact_duration(p.run_time)),
-            Cell::from(p.status.to_string()),
-            Cell::from(cmd),
-        ]);
+        let row = Row::new(
+            columns
+                .iter()
+                .map(|c| proc_cell(*c, p, &cmd, cpu, theme))
+                .collect::<Vec<_>>(),
+        );
         let row = if selected {
             row.style(
                 Style::default()
@@ -776,20 +794,55 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         rows.push(row);
     }
 
-    let widths = [
-        Constraint::Length(7),
-        Constraint::Length(9),
-        Constraint::Length(5),
-        Constraint::Length(5),
-        Constraint::Length(7),
-        Constraint::Length(8),
-        Constraint::Length(7),
-        Constraint::Length(7),
-        Constraint::Length(1),
-        Constraint::Min(10),
-    ];
+    let widths: Vec<Constraint> = columns
+        .iter()
+        .map(|c| match c.width() {
+            Some(w) => Constraint::Length(w),
+            None => Constraint::Min(10),
+        })
+        .collect();
     let table = Table::new(rows, widths).header(header).column_spacing(1);
     f.render_widget(table, inner);
+}
+
+/// Render one process-table cell. `cmd` is the (possibly tree-indented) command
+/// and `cpu` the clamped CPU percentage, both computed once per row.
+fn proc_cell<'a>(col: ProcColumn, p: &'a ProcInfo, cmd: &str, cpu: f32, theme: &Theme) -> Cell<'a> {
+    match col {
+        ProcColumn::Pid => Cell::from(format!("{:>7}", p.pid)),
+        ProcColumn::User => Cell::from(truncate(&p.user, 9)),
+        ProcColumn::Cpu => Cell::from(Span::styled(
+            format!("{:>5.1}", p.cpu.min(999.0)),
+            Style::default().fg(theme.grad(cpu / 100.0)),
+        )),
+        ProcColumn::MemPct => Cell::from(Span::styled(
+            format!("{:>5.1}", p.mem_pct),
+            Style::default().fg(theme.grad((p.mem_pct / 100.0).clamp(0.0, 1.0))),
+        )),
+        ProcColumn::Mem => Cell::from(short_bytes(p.mem_bytes)),
+        ProcColumn::Disk => Cell::from({
+            let io = p.io_read_rate + p.io_write_rate;
+            if io >= 1.0 {
+                Span::styled(
+                    format!("{}/s", short_bytes(io as u64)),
+                    Style::default().fg(theme.disk_write.color()),
+                )
+            } else {
+                Span::styled("·", dim(theme))
+            }
+        }),
+        ProcColumn::Vram => Cell::from(if p.gpu_mem > 0 {
+            Span::styled(
+                short_bytes(p.gpu_mem),
+                Style::default().fg(theme.accent2.color()),
+            )
+        } else {
+            Span::styled("·", dim(theme))
+        }),
+        ProcColumn::Time => Cell::from(compact_duration(p.run_time)),
+        ProcColumn::State => Cell::from(p.status.to_string()),
+        ProcColumn::Command => Cell::from(cmd.to_string()),
+    }
 }
 
 // ── Footer ───────────────────────────────────────────────────────────────────
@@ -811,6 +864,37 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("  (Enter: apply · Esc: clear)", dim(theme)),
         ]);
         f.render_widget(Paragraph::new(line), area);
+        return;
+    }
+    // Replay and recording are modes, not events — they belong in the footer
+    // permanently, not in the transient status line.
+    if let Some(r) = &app.replay {
+        let pct = if r.len() > 1 {
+            (r.position() as f64 / (r.len() - 1) as f64 * 100.0).round()
+        } else {
+            100.0
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    if app.paused {
+                        " ▮▮ REPLAY "
+                    } else {
+                        " ▶ REPLAY "
+                    },
+                    Style::default()
+                        .bg(theme.accent.color())
+                        .fg(theme.bg.unwrap_or(theme.selection).color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" frame {}/{} ({pct:.0}%)", r.position() + 1, r.len()),
+                    Style::default().fg(theme.accent2.color()),
+                ),
+                Span::styled("  space: pause · ←/→: step · q: quit", dim(theme)),
+            ])),
+            area,
+        );
         return;
     }
     if let Some((msg, _)) = &app.status {
@@ -873,7 +957,11 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
     let Some(p) = app.selected_proc() else {
         return;
     };
-    let rect = centered(area, 72, 18);
+    // Grow with the terminal: the base rows are fixed, the three detail
+    // sections take whatever is left.
+    let height = (area.height.saturating_sub(4)).clamp(18, 40);
+    let width = (area.width.saturating_sub(6)).clamp(60, 96);
+    let rect = centered(area, width, height);
     f.render_widget(Clear, rect);
     let block = panel(
         &format!("process · {} ({})", truncate(&p.name, 28), p.pid),
@@ -961,12 +1049,112 @@ fn render_detail(f: &mut Frame, area: Rect, app: &App) {
             theme.fg.color(),
         ),
         row("Command", truncate(&p.cmd, wrap), theme.dim.color()),
-        Line::from(Span::styled(
-            "Enter / Esc to close · K to signal",
-            dim(theme),
-        )),
     ];
+    let mut lines = lines;
+
+    // Open files, sockets and environment — fetched only while this overlay is
+    // open. Each section is capped and reports what it elided, so a process
+    // with 4000 descriptors doesn't push everything else off the panel.
+    if let Some(d) = &app.detail {
+        let budget = (inner.height as usize).saturating_sub(lines.len() + 2);
+        let per_section = (budget / 3).max(1);
+
+        let files: Vec<&crate::metrics::OpenFile> =
+            d.open_files.iter().filter(|f| !f.is_pseudo()).collect();
+        section(
+            &mut lines,
+            theme,
+            &format!("Open files ({})", d.open_files.len()),
+            files.len(),
+            per_section,
+            files.iter().take(per_section).map(|f| {
+                Line::from(vec![
+                    Span::styled(format!("  {:>4}  ", f.fd), dim(theme)),
+                    Span::styled(
+                        truncate(&f.target, wrap),
+                        Style::default().fg(theme.fg.color()),
+                    ),
+                ])
+            }),
+        );
+
+        section(
+            &mut lines,
+            theme,
+            &format!("Sockets ({})", d.connections.len()),
+            d.connections.len(),
+            per_section,
+            d.connections.iter().take(per_section).map(|c| {
+                Line::from(vec![
+                    Span::styled(format!("  {:<5} ", c.proto), dim(theme)),
+                    Span::styled(
+                        format!("{:<22}", truncate(&c.local, 22)),
+                        Style::default().fg(theme.accent2.color()),
+                    ),
+                    Span::styled(
+                        format!("{:<22}", truncate(&c.remote, 22)),
+                        Style::default().fg(theme.fg.color()),
+                    ),
+                    Span::styled(c.state, dim(theme)),
+                ])
+            }),
+        );
+
+        section(
+            &mut lines,
+            theme,
+            &format!("Environment ({})", d.env.len()),
+            d.env.len(),
+            per_section,
+            d.env.iter().take(per_section).map(|(k, v)| {
+                Line::from(vec![
+                    Span::styled(
+                        format!("  {k}="),
+                        Style::default().fg(theme.accent2.color()),
+                    ),
+                    Span::styled(truncate(v, wrap.saturating_sub(k.len())), dim(theme)),
+                ])
+            }),
+        );
+    }
+
+    lines.push(Line::from(Span::styled(
+        "Enter / Esc to close · K to signal",
+        dim(theme),
+    )));
     f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Append a titled detail section, or a dimmed "none" line when it is empty.
+/// `total` vs `shown` drives the "+N more" note, so an elided list never looks
+/// like a complete one.
+fn section<'a>(
+    lines: &mut Vec<Line<'a>>,
+    theme: &Theme,
+    title: &str,
+    total: usize,
+    cap: usize,
+    rows: impl Iterator<Item = Line<'a>>,
+) {
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        Style::default()
+            .fg(theme.accent.color())
+            .add_modifier(Modifier::BOLD),
+    )));
+    let mut shown = 0;
+    for row in rows {
+        lines.push(row);
+        shown += 1;
+    }
+    if shown == 0 {
+        lines.push(Line::from(Span::styled("  —", dim(theme))));
+    } else if total > cap {
+        lines.push(Line::from(Span::styled(
+            format!("  … {} more", total - cap),
+            dim(theme),
+        )));
+    }
 }
 
 fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app: &App) {
@@ -1045,11 +1233,17 @@ fn render_renice_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app:
 fn render_ai(f: &mut Frame, area: Rect, app: &App) {
     let theme = app.theme();
     let c = &app.collector;
-    let rect = centered(area, 78.min(area.width), 26.min(area.height));
-    f.render_widget(Clear, rect);
-    let block = panel("AI · local-LLM GPU view · Esc/a to close", theme);
-    let inner = block.inner(rect);
-    f.render_widget(block, rect);
+    // The panel is sized to its content, so a machine with one GPU and no
+    // inference server doesn't get a box two-thirds full of empty rows. The
+    // lines are therefore built against a provisional area first, and the real
+    // rect is derived from how many there turned out to be.
+    let width = 78.min(area.width);
+    let inner = Rect {
+        x: 0,
+        y: 0,
+        width: width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
     if inner.width < 4 || inner.height < 2 {
         return;
     }
@@ -1183,6 +1377,40 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 dim(theme),
             )));
         }
+        // Compute vs memory-bandwidth over time, mirrored around a midline.
+        // Token generation is bandwidth-bound once the model is resident, so
+        // the *divergence* between these two lines is the diagnosis: bandwidth
+        // pinned while compute idles means you are memory-bound, and no amount
+        // of a faster GPU core will help.
+        if let Some(h) = c.gpu_history.get(i) {
+            let graph_h = 4usize;
+            if h.compute.len() >= 2 && bw >= 12 && lines.len() + graph_h + 1 < inner.height as usize
+            {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {:<10}", "trend"), dim(theme)),
+                    Span::styled("compute ▲", Style::default().fg(theme.accent.color())),
+                    Span::styled("  /  ", dim(theme)),
+                    Span::styled("▼ bandwidth", Style::default().fg(theme.accent2.color())),
+                ]));
+                // Only the visible window, so the graph scrolls with time
+                // instead of squeezing an ever-longer history into `bw` cells.
+                let (compute, bandwidth) = (h.compute.tail(bw * 2), h.bandwidth.tail(bw * 2));
+                for line in graph::mirror_graph(
+                    &compute,
+                    &bandwidth,
+                    100.0,
+                    bw,
+                    graph_h,
+                    theme.accent.color(),
+                    theme.accent2.color(),
+                ) {
+                    let mut spans = vec![Span::styled("            ", dim(theme))];
+                    spans.extend(line.spans);
+                    lines.push(Line::from(spans));
+                }
+            }
+        }
+
         lines.push(Line::from(Span::raw("")));
     }
 
@@ -1242,7 +1470,7 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 break;
             }
             let mut head = vec![Span::styled(
-                format!("  {} :{}", sv.runtime, sv.port),
+                format!("  {}", sv.label()),
                 Style::default()
                     .fg(theme.accent2.color())
                     .add_modifier(Modifier::BOLD),
@@ -1277,7 +1505,10 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                 }
             }
             if let Some(p) = sv.prompt_tps {
-                stat.push(Span::styled(format!("  prefill {:.0}/s", p), dim(theme)));
+                stat.push(Span::styled(
+                    format!("  prefill {:.0}/s", p),
+                    Style::default().fg(theme.accent2.color()),
+                ));
             }
             if let Some(k) = sv.kv_pct {
                 stat.push(Span::styled(
@@ -1291,11 +1522,85 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
                     dim(theme),
                 ));
             }
-            if let Some(t) = sv.ttft_ms {
+            // Preemption is the signal nothing else surfaces: the server threw
+            // away work it had already done because the KV cache ran out.
+            // Throughput collapses while the GPU still looks busy.
+            if let Some(rate) = sv.preempt_rate.filter(|r| *r > 0.0) {
+                stat.push(Span::styled(
+                    format!("  ⟲ preempt {rate:.1}/s"),
+                    Style::default()
+                        .fg(theme.grad(1.0))
+                        .add_modifier(Modifier::BOLD),
+                ));
+            } else if let Some(total) = sv.preemptions.filter(|t| *t > 0.0) {
+                // Not preempting now, but it has — worth knowing this server
+                // has been under KV pressure at some point.
+                stat.push(Span::styled(format!("  ⟲ {total:.0} total"), dim(theme)));
+            }
+            // Only fall back to the mean TTFT when no histogram was available;
+            // the percentile line below says strictly more.
+            if let (Some(t), None) = (sv.ttft_ms, sv.ttft) {
                 stat.push(Span::styled(format!("  ttft {:.0}ms", t), dim(theme)));
             }
             if stat.len() > 1 {
                 lines.push(Line::from(stat));
+            }
+
+            // Prefill vs decode as a first-class split: the two phases have
+            // different bottlenecks (prefill is compute-bound, decode is
+            // memory-bandwidth-bound), so the mix is what tells you which one
+            // you are currently paying for.
+            if let (Some(share), true) = (sv.prefill_share_pct(), lines.len() + 1 < cap) {
+                let decode = 100.0 - share;
+                let (phase, pct) = if share >= decode {
+                    ("prefill", share)
+                } else {
+                    ("decode", decode)
+                };
+                lines.push(Line::from(vec![
+                    Span::styled("    phase  ", dim(theme)),
+                    Span::styled(
+                        format!("prefill {share:.0}%"),
+                        Style::default().fg(theme.accent2.color()),
+                    ),
+                    Span::styled(" · ", dim(theme)),
+                    Span::styled(
+                        format!("decode {decode:.0}%"),
+                        Style::default().fg(theme.grad(0.0)),
+                    ),
+                    Span::styled(
+                        format!("  — {phase}-dominated ({pct:.0}% of tokens)"),
+                        dim(theme),
+                    ),
+                ]));
+            }
+
+            // The SLO triad: TTFT is how long until something appears, TPOT is
+            // how fast it then streams. p95/p99 are what users actually feel.
+            for (name, p) in [("ttft", sv.ttft), ("tpot", sv.tpot)] {
+                let Some(p) = p else { continue };
+                if lines.len() + 1 >= cap {
+                    break;
+                }
+                // Scale the color by how far p95 drifts from p50: a long tail
+                // is the interesting signal, not the absolute number.
+                let spread = if p.p50 > 0.0 {
+                    ((p.p95 / p.p50 - 1.0) / 3.0).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {name:<6} "), dim(theme)),
+                    Span::styled(
+                        format!("p50 {:.0}ms", p.p50),
+                        Style::default().fg(theme.fg.color()),
+                    ),
+                    Span::styled(
+                        format!("  p95 {:.0}ms", p.p95),
+                        Style::default().fg(theme.grad(spread as f32)),
+                    ),
+                    Span::styled(format!("  p99 {:.0}ms", p.p99), dim(theme)),
+                ]));
             }
 
             // Trend sparklines (nvtop-style): tokens/sec against its own peak,
@@ -1432,7 +1737,22 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
         )));
     }
 
-    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+    // Trailing blank lines are an artifact of the per-GPU spacer, not content.
+    while lines.last().is_some_and(|l| line_is_blank(l)) {
+        lines.pop();
+    }
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let rect = centered(area, width, height);
+    f.render_widget(Clear, rect);
+    let block = panel("AI · local-LLM GPU view · Esc/a to close", theme);
+    let target = block.inner(rect);
+    f.render_widget(block, rect);
+    f.render_widget(Paragraph::new(Text::from(lines)), target);
+}
+
+/// Whether a rendered line carries no visible text.
+fn line_is_blank(line: &Line<'_>) -> bool {
+    line.spans.iter().all(|s| s.content.trim().is_empty())
 }
 
 fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {
@@ -1535,6 +1855,82 @@ fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(table, inner);
 }
 
+/// Timeline of recent alert fire/resolve transitions, newest first.
+///
+/// The banner only ever shows what is firing *right now*; this is the "what
+/// happened while I wasn't looking" view, and it is where flap suppression
+/// becomes visible as a count rather than as silence.
+fn render_alert_history(f: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme();
+    let history = app.tracker.history();
+    let suppressed = app.tracker.suppressed();
+
+    let rect = centered(area, 78, (history.len().clamp(1, 16) + 4) as u16);
+    f.render_widget(Clear, rect);
+    let title = if suppressed > 0 {
+        format!(
+            "alert history · {} events · {suppressed} flap{} suppressed",
+            history.len(),
+            if suppressed == 1 { "" } else { "s" }
+        )
+    } else {
+        format!("alert history · {} events", history.len())
+    };
+    let block = panel(&title, theme);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    if inner.height == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    if history.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No alerts have fired since toptop started.",
+            dim(theme),
+        )));
+    } else {
+        let now = Instant::now();
+        let rows = (inner.height as usize).saturating_sub(1);
+        for t in history.iter().rev().take(rows) {
+            let (marker, style) = match t.state {
+                TransitionState::Fired => (
+                    "▲ fired   ",
+                    Style::default().fg(match t.level {
+                        Level::Crit => theme.grad(1.0),
+                        Level::Warn => theme.grad(0.55),
+                    }),
+                ),
+                TransitionState::Resolved => {
+                    ("▼ resolved", Style::default().fg(theme.net_down.color()))
+                }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>5}  ", compact_age(now, t.at)), dim(theme)),
+                Span::styled(marker, style),
+                Span::styled(
+                    format!("  {}", t.message),
+                    Style::default().fg(theme.fg.color()),
+                ),
+            ]));
+        }
+    }
+    lines.push(Line::from(Span::styled("Esc/A to close", dim(theme))));
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Compact relative age, e.g. `12s`, `4m`, `2h`.
+fn compact_age(now: Instant, then: Instant) -> String {
+    let secs = now.saturating_duration_since(then).as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h", secs / 3600)
+    }
+}
+
 fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
     let rect = centered(area, 56, 26);
     f.render_widget(Clear, rect);
@@ -1562,6 +1958,7 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("t", "toggle process tree"),
         ("e", "toggle per-core CPU meters"),
         ("a", "AI / local-LLM GPU view"),
+        ("A", "alert history timeline"),
         ("n", "network connections"),
         ("L", "cycle layout preset"),
         ("/", "filter processes"),
