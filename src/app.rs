@@ -9,7 +9,8 @@ use sysinfo::Signal;
 use crate::alerts::{self, Alert, AlertConfig};
 use crate::config::Config;
 use crate::metrics::{
-    signal_name, Collector, Connection, PriorityOutcome, ProcInfo, SignalOutcome, SIGNALS,
+    signal_name, Collector, Connection, PriorityOutcome, ProcDetail, ProcInfo, SignalOutcome,
+    SIGNALS,
 };
 use crate::theme::{Theme, THEMES};
 
@@ -151,6 +152,9 @@ pub struct App {
     pub renice_menu: Option<usize>,
     /// Whether the process detail overlay is shown for the selection.
     pub show_detail: bool,
+    /// Open files, environment and sockets for the selected process, fetched
+    /// only while the overlay is open.
+    pub detail: Option<ProcDetail>,
     /// Whether the AI/LLM GPU view is shown.
     pub show_ai: bool,
     /// Whether the network-connections view is shown.
@@ -197,6 +201,7 @@ impl App {
             signal_menu: None,
             renice_menu: None,
             show_detail: false,
+            detail: None,
             show_ai: false,
             show_conn: false,
             connections: Vec::new(),
@@ -247,7 +252,22 @@ impl App {
         if self.show_conn {
             self.refresh_connections();
         }
+        self.refresh_detail();
         self.expire_status();
+    }
+
+    /// Fetch the selected process's detail while the overlay is open, and drop
+    /// it as soon as it closes — open files and environment are expensive
+    /// enough that they should never be collected for a closed overlay.
+    fn refresh_detail(&mut self) {
+        if !self.show_detail {
+            self.detail = None;
+            return;
+        }
+        match self.selected_pid {
+            Some(pid) => self.detail = Some(self.collector.proc_detail(pid)),
+            None => self.detail = None,
+        }
     }
 
     /// Re-snapshot network connections and clamp the scroll offset.
@@ -656,7 +676,11 @@ impl App {
                     self.should_quit = true;
                 }
             }
-            KeyCode::Enter => self.show_detail = !self.show_detail,
+            KeyCode::Enter => {
+                self.show_detail = !self.show_detail;
+                // Fetch immediately so the overlay is never blank for a tick.
+                self.refresh_detail();
+            }
             KeyCode::Char('?') | KeyCode::F(1) => self.show_help = true,
             KeyCode::Char(' ') => {
                 self.paused = !self.paused;
