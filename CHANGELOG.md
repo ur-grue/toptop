@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   accidental O(n²) over the process list, a per-row syscall, an unthrottled
   file read. Wired into CI. (#46)
 
+### Fixed
+
+- **The advertised MSRV was wrong.** `Cargo.toml` and the README promised Rust
+  1.82, but ratatui 0.30 pulls in `ratatui-termina`, which requires
+  `edition2024` and therefore Rust 1.85+. Anyone on 1.82–1.84 got a confusing
+  Cargo manifest error instead of a clear "too old" message. The advertised
+  MSRV is now 1.85, and the new MSRV job — which is what caught this — keeps it
+  honest. (#18)
+
 ### Changed
 
 - **AI view renders ~7x faster** — the first finding of the new guard. AI

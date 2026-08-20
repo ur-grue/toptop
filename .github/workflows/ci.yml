@@ -69,14 +69,15 @@ jobs:
         run: cargo build --release
 
   msrv:
-    # rust-version in Cargo.toml and the README both promise 1.82. Without a
-    # job pinned to it, the first accidental use of a newer std API silently
-    # breaks everyone on an older toolchain.
-    name: msrv 1.82
+    # rust-version in Cargo.toml and the README both promise 1.85. Without a
+    # job pinned to it, the promise drifts silently — as it already had: the
+    # advertised 1.82 stopped being true when ratatui 0.30 pulled in a
+    # dependency requiring edition2024 (Rust 1.85+). This job is what caught it.
+    name: msrv 1.85
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.82.0
+      - uses: dtolnay/rust-toolchain@1.85.0
       - name: Cache cargo
         uses: actions/cache@v4
         with:
