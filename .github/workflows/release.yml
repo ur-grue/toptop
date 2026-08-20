@@ -1,9 +1,14 @@
 name: Release
 
-# Build a release binary tarball and a .deb, then attach them to the GitHub
-# Release. Runs when a v* tag is pushed, or on manual dispatch with a tag name
-# (in which case the release step creates the tag at the dispatched commit —
-# useful where the git remote blocks direct tag pushes).
+# Build release binaries for every platform toptop claims to support, plus a
+# .deb, and attach them to the GitHub Release. Runs when a v* tag is pushed, or
+# on manual dispatch with a tag name (in which case the release step creates the
+# tag at the dispatched commit — useful where the git remote blocks direct tag
+# pushes).
+#
+# Every target builds on its own native runner: no cross-compilation, no
+# toolchain juggling, and each binary is exercised by `--version` on the
+# machine it was built for before it is published.
 on:
   push:
     tags: ["v*"]
@@ -16,51 +21,151 @@ on:
       tag:
         description: "Release tag (e.g. v1.0.0)"
         required: true
+      dry_run:
+        description: "Build and smoke-test every platform, but publish nothing"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    name: build & publish
+  tag:
+    name: resolve tag
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - id: tag
+        env:
+          RAW: ${{ inputs.tag || github.ref_name }}
+        run: |
+          TAG="${RAW#release/}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.name }}
+    needs: tag
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing to build must not silently ship a release missing
+      # that platform's binary.
+      fail-fast: true
+      matrix:
+        include:
+          - name: x86_64-linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: aarch64-linux
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - name: aarch64-macos
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: x86_64-macos
+            os: macos-13
+            target: x86_64-apple-darwin
+          - name: x86_64-windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
-      - name: Build release binary
-        run: cargo build --release --locked
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Resolve release tag
-        id: tag
-        env:
-          RAW: ${{ inputs.tag || github.ref_name }}
-        run: echo "tag=${RAW#release/}" >> "$GITHUB_OUTPUT"
-
-      - name: Package tarball
-        env:
-          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+      - name: Smoke-test the binary we are about to ship
+        shell: bash
         run: |
-          VERSION="${RELEASE_TAG#v}"
-          PKG="toptop-${VERSION}-x86_64-linux"
+          BIN="target/${{ matrix.target }}/release/toptop"
+          [ "${{ runner.os }}" = "Windows" ] && BIN="${BIN}.exe"
+          "$BIN" --version
+          # --snapshot is the non-interactive path: it exercises the real
+          # collectors without needing a TTY, so a binary that cannot sample
+          # this machine fails here rather than in someone's terminal.
+          "$BIN" --snapshot > /dev/null
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
+        run: |
+          PKG="toptop-${VERSION}-${{ matrix.name }}"
           mkdir -p "dist/${PKG}"
-          cp target/release/toptop "dist/${PKG}/"
+          cp "target/${{ matrix.target }}/release/toptop" "dist/${PKG}/"
           cp README.md LICENSE man/toptop.1 "dist/${PKG}/"
           cp -r completions "dist/${PKG}/"
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
 
-      - name: Build .deb
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
-          cargo install cargo-deb --locked
-          cargo deb --no-build --output dist/
+          PKG="toptop-${VERSION}-${{ matrix.name }}"
+          mkdir -p "dist/${PKG}"
+          cp "target/${{ matrix.target }}/release/toptop.exe" "dist/${PKG}/"
+          cp README.md LICENSE "dist/${PKG}/"
+          cd dist && 7z a "${PKG}.zip" "${PKG}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.deb
+          if-no-files-found: error
+
+  deb:
+    # Its own job: `cargo deb` reads the asset paths in Cargo.toml, which point
+    # at target/release/ — a --target build puts the binary somewhere else, so
+    # this builds natively rather than teaching two places about the triple.
+    name: debian package
+    needs: tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deb (prebuilt)
+        uses: taiki-e/install-action@cargo-deb
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: cargo deb --no-build --output dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  publish:
+    name: publish release
+    needs: [tag, build, deb]
+    # A dry run proves every platform still builds without creating a release,
+    # so the pipeline can be exercised before it is trusted with a tag.
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List what is being published
+        run: ls -lh dist/
 
       - name: Publish to the GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: |
-            dist/*.tar.gz
-            dist/*.deb
+          tag_name: ${{ needs.tag.outputs.tag }}
+          files: dist/*
           generate_release_notes: true

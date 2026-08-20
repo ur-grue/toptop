@@ -20,6 +20,30 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 
 </div>
 
+
+---
+
+### Get it in one line
+
+```bash
+# Linux / macOS — downloads the right binary for your platform
+curl -fsSL https://raw.githubusercontent.com/ur-grue/toptop/main/install.sh | sh
+```
+
+<details>
+<summary>Other ways: Homebrew · .deb · Windows · from source</summary>
+
+See [Install](#-install) for every platform, or grab a binary straight from the
+[latest release](https://github.com/ur-grue/toptop/releases/latest).
+
+</details>
+
+Then, on any machine — no GPU required:
+
+```bash
+toptop --demo
+```
+
 ---
 
 **The local‑inference view (press `a`) — the numbers `nvidia-smi` doesn't show you:**
@@ -292,34 +316,68 @@ and keep retrying. No agent, no daemon, no open ports — just SSH and the singl
 
 ## 🚀 Install
 
-**From source** (requires a Rust toolchain, 1.88+):
+**One line** (Linux · macOS, x86_64 and arm64):
 
 ```bash
-git clone https://github.com/ur-grue/toptop && cd toptop
-cargo build --release
-./target/release/toptop          # or: cargo install --path .
+curl -fsSL https://raw.githubusercontent.com/ur-grue/toptop/main/install.sh | sh
 ```
 
-**Debian / Ubuntu** (`.deb` from the [v1.0.0 release](https://github.com/ur-grue/toptop/releases/latest)):
+Picks the right build for your platform, checks the binary actually runs before
+putting it on your PATH, and installs to `~/.local/bin` (override with
+`TOPTOP_BIN_DIR=...`, pin a version with `TOPTOP_VERSION=v1.2.3`). Read it
+first if you'd rather — it's [one short POSIX script](install.sh).
+
+<details>
+<summary><b>Prefer to do it by hand?</b> Every platform, one command each.</summary>
+
+**Binary** — pick your platform from the [latest
+release](https://github.com/ur-grue/toptop/releases/latest):
+
+| Platform | Asset |
+|---|---|
+| Linux x86_64 | `toptop-<version>-x86_64-linux.tar.gz` |
+| Linux arm64 | `toptop-<version>-aarch64-linux.tar.gz` |
+| macOS Apple Silicon | `toptop-<version>-aarch64-macos.tar.gz` |
+| macOS Intel | `toptop-<version>-x86_64-macos.tar.gz` |
+| Windows x86_64 | `toptop-<version>-x86_64-windows.zip` |
 
 ```bash
-wget https://github.com/ur-grue/toptop/releases/download/v1.0.1/toptop_1.0.1-1_amd64.deb
-sudo apt install ./toptop_1.0.1-1_amd64.deb   # installs binary, man page, completions
+curl -L https://github.com/ur-grue/toptop/releases/latest/download/toptop-1.0.1-x86_64-linux.tar.gz | tar xz
+sudo install -m755 toptop-1.0.1-x86_64-linux/toptop /usr/local/bin/
 ```
 
-**Binary tarball** (x86_64 Linux):
+**Windows** — download the `.zip` from the [latest
+release](https://github.com/ur-grue/toptop/releases/latest), extract it, and run
+`toptop.exe` from a terminal (Windows Terminal recommended — it does truecolor,
+which the themes rely on).
+
+**Debian / Ubuntu**:
 
 ```bash
-curl -L https://github.com/ur-grue/toptop/releases/download/v1.0.1/toptop-1.0.1-x86_64-linux.tar.gz | tar xz
-./toptop-1.0.1-x86_64-linux/toptop
+curl -LO https://github.com/ur-grue/toptop/releases/latest/download/toptop_1.0.1-1_amd64.deb
+sudo apt install ./toptop_1.0.1-1_amd64.deb   # binary, man page, completions
 ```
 
-**Homebrew** (this repo is its own tap — the [formula](Formula/toptop.rb) is pinned to v1.0.1):
+**Homebrew** — this repo is its own tap:
 
 ```bash
 brew tap ur-grue/toptop https://github.com/ur-grue/toptop
-brew trust ur-grue/toptop            # one-time: Homebrew requires approving third-party taps
-brew install toptop                  # or: brew install --HEAD toptop for the tip of main
+brew install toptop        # or: brew install --HEAD toptop for the tip of main
+```
+
+**From source** (Rust 1.88+):
+
+```bash
+cargo install --git https://github.com/ur-grue/toptop
+```
+
+</details>
+
+Then, on any machine:
+
+```bash
+toptop           # the full system monitor
+toptop --demo    # the AI view with a simulated GPU — no GPU needed
 ```
 
 ### Platform support
