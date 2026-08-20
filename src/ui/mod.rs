@@ -752,7 +752,11 @@ fn render_procs(f: &mut Frame, area: Rect, app: &mut App) {
         height: rows_cap as u16,
     };
 
-    let columns = app.columns.clone();
+    // Narrow terminals drop columns rather than squeezing all of them into
+    // unreadable stubs. The result also drives click-to-sort, so the header
+    // and the hit map can't disagree.
+    let columns = crate::app::fit_columns(&app.columns, inner.width);
+    app.visible_columns = columns.clone();
     let header = Row::new(
         columns
             .iter()
