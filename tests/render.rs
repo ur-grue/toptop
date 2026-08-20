@@ -351,3 +351,52 @@ fn quit_keys_work() {
     app.on_key(key(KeyCode::Char('q')));
     assert!(app.should_quit);
 }
+
+/// The flight recorder end to end: record real ticks to a file, load it back
+/// as a replay, and drive the TUI off the recording.
+#[test]
+fn record_then_replay_drives_the_tui() {
+    use toptop::record::{Recorder, Replay};
+
+    let path = std::env::temp_dir().join(format!("toptop-replay-{}.jsonl", std::process::id()));
+    std::fs::remove_file(&path).ok();
+
+    // Record three ticks through the app, exactly as --record does.
+    {
+        let mut app = App::new(&Config::default());
+        app.recorder = Some(Recorder::create(&path).expect("create recording"));
+        for _ in 0..3 {
+            app.on_tick();
+        }
+        assert!(app.recorder.is_some(), "recording must not have aborted");
+    }
+
+    let replay = Replay::load(&path).expect("load the recording we just wrote");
+    assert_eq!(replay.len(), 3);
+    assert_eq!(replay.skipped, 0);
+
+    // Replay it: the app must render every frame and never touch live metrics.
+    let mut app = App::new(&Config::default());
+    app.replay = Some(replay);
+    let hostname_before = app.collector.host.hostname.clone();
+    for _ in 0..5 {
+        app.on_tick();
+        render_at(&mut app, 110, 36);
+    }
+    // Playback clamps at the last frame instead of wrapping.
+    assert_eq!(app.replay.as_ref().unwrap().position(), 2);
+    assert_eq!(app.collector.host.hostname, hostname_before);
+
+    // Scrubbing: ←/→ step and imply pause.
+    app.on_key(key(KeyCode::Left));
+    assert!(app.paused, "stepping pauses playback");
+    assert_eq!(app.replay.as_ref().unwrap().position(), 1);
+    render_at(&mut app, 110, 36);
+    app.on_key(key(KeyCode::Right));
+    assert_eq!(app.replay.as_ref().unwrap().position(), 2);
+    // Paused playback stays put.
+    app.on_tick();
+    assert_eq!(app.replay.as_ref().unwrap().position(), 2);
+
+    std::fs::remove_file(&path).ok();
+}

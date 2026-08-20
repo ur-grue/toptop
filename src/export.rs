@@ -43,6 +43,12 @@ pub fn to_json(c: &Collector, top_procs: usize) -> String {
     let mut s = String::with_capacity(4096);
     s.push('{');
 
+    // Format version, so a `--replay` of an old recording can tell.
+    s.push_str(&format!(
+        "\"schema_version\":{},",
+        crate::record::SCHEMA_VERSION
+    ));
+
     // host
     s.push_str(&format!(
         "\"host\":{{\"hostname\":\"{}\",\"os\":\"{}\",\"kernel\":\"{}\",\"arch\":\"{}\",\"cpu\":\"{}\",\"cores\":{}}},",

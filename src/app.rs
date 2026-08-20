@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::metrics::{
     signal_name, Collector, Connection, PriorityOutcome, ProcInfo, SignalOutcome, SIGNALS,
 };
+use crate::record::{Recorder, Replay};
 use crate::theme::{Theme, THEMES};
 
 /// Process table sort columns.
@@ -163,6 +164,10 @@ pub struct App {
     pub conn_rows: usize,
     /// Currently-firing threshold alerts (recomputed each tick).
     pub alerts: Vec<Alert>,
+    /// `--record <file>`: append one JSON snapshot per tick.
+    pub recorder: Option<Recorder>,
+    /// `--replay <file>`: feed recorded snapshots instead of live metrics.
+    pub replay: Option<Replay>,
     /// `--demo` mode: overlay synthesized GPU + inference data each tick.
     pub demo: bool,
     demo_tick: u64,
@@ -203,6 +208,8 @@ impl App {
             conn_offset: 0,
             conn_rows: 0,
             alerts: Vec::new(),
+            recorder: None,
+            replay: None,
             demo: false,
             demo_tick: 0,
             alert_cfg: cfg.alerts.clone(),
@@ -235,11 +242,27 @@ impl App {
     pub fn on_tick(&mut self) {
         // Freeze the process list while a kill confirmation is pending so the
         // target can't disappear from the table between prompt and confirm.
-        if !self.paused && self.pending_kill.is_none() {
+        if let Some(replay) = &mut self.replay {
+            // Replay drives the collector instead of the live system: no
+            // refresh, no demo overlay, no recording.
+            if !self.paused {
+                replay.tick();
+            }
+            let replay = self.replay.as_ref().expect("just borrowed");
+            replay.apply(&mut self.collector);
+        } else if !self.paused && self.pending_kill.is_none() {
             self.collector.refresh();
             if self.demo {
                 self.demo_tick += 1;
                 crate::demo::apply(&mut self.collector, self.demo_tick);
+            }
+            if let Some(rec) = &mut self.recorder {
+                if let Err(e) = rec.record(&self.collector) {
+                    // Stop rather than silently producing a truncated
+                    // recording, and say so where the user will see it.
+                    self.recorder = None;
+                    self.set_status(format!("Recording stopped: {e}"));
+                }
             }
         }
         self.rebuild_proc_view();
@@ -661,6 +684,22 @@ impl App {
             KeyCode::Char(' ') => {
                 self.paused = !self.paused;
                 self.set_status(if self.paused { "Paused" } else { "Resumed" });
+            }
+            // Scrubbing a recording: stepping implies pausing, or playback
+            // would immediately undo the step.
+            KeyCode::Left | KeyCode::Right if self.replay.is_some() => {
+                let delta = if key.code == KeyCode::Right { 1 } else { -1 };
+                self.paused = true;
+                if let Some(r) = &mut self.replay {
+                    r.step(delta);
+                    let (pos, len) = (r.position() + 1, r.len());
+                    self.replay
+                        .as_ref()
+                        .expect("just borrowed")
+                        .apply(&mut self.collector);
+                    self.set_status(format!("Frame {pos}/{len}"));
+                }
+                self.rebuild_proc_view();
             }
             KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),

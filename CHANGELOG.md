@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Record & replay** — `--record <file>` appends one JSON snapshot per tick
+  (JSONL; the `--export json` document plus a `schema_version`), and
+  `--replay <file>` plays it back through the normal TUI: space pauses, ←/→
+  step frame by frame, and the footer becomes a transport bar showing the
+  position. Every panel renders from the recording, so a GPU incident can be
+  replayed on a machine with no GPU. Recordings keep 100 process rows per
+  frame rather than the export's top 20, an unparseable line (a recording
+  killed mid-write) is skipped and counted rather than fatal, a version
+  mismatch is reported on stderr, and a failing write stops recording with a
+  visible status instead of silently truncating. The header shows `● REC`
+  while recording. (#12)
+
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
   Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus
   tokens/sec from its counters), the `mlc-llm` launcher spelling (base MLC

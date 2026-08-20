@@ -117,6 +117,15 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         ),
         Span::styled(format!("  {} tasks, {} run", tasks, running), dim(theme)),
     ];
+    // Recording is a persistent, easy-to-forget state — mark it unmissably.
+    if app.recorder.is_some() {
+        spans.push(Span::styled(
+            "  ● REC",
+            Style::default()
+                .fg(theme.grad(1.0))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if let Some(bat) = &c.battery {
         let t = (bat.percent / 100.0).clamp(0.0, 1.0);
         let glyph = if bat.status.eq_ignore_ascii_case("charging") {
@@ -811,6 +820,37 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::styled("  (Enter: apply · Esc: clear)", dim(theme)),
         ]);
         f.render_widget(Paragraph::new(line), area);
+        return;
+    }
+    // Replay and recording are modes, not events — they belong in the footer
+    // permanently, not in the transient status line.
+    if let Some(r) = &app.replay {
+        let pct = if r.len() > 1 {
+            (r.position() as f64 / (r.len() - 1) as f64 * 100.0).round()
+        } else {
+            100.0
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    if app.paused {
+                        " ▮▮ REPLAY "
+                    } else {
+                        " ▶ REPLAY "
+                    },
+                    Style::default()
+                        .bg(theme.accent.color())
+                        .fg(theme.bg.unwrap_or(theme.selection).color())
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(" frame {}/{} ({pct:.0}%)", r.position() + 1, r.len()),
+                    Style::default().fg(theme.accent2.color()),
+                ),
+                Span::styled("  space: pause · ←/→: step · q: quit", dim(theme)),
+            ])),
+            area,
+        );
         return;
     }
     if let Some((msg, _)) = &app.status {

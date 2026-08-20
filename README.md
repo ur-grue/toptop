@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-113%20green-success)
+![Tests](https://img.shields.io/badge/tests-125%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -132,6 +132,7 @@ sensors, battery, seven themes — all in a single **~1 MB binary with zero runt
 | ☠️ **Signal menu** | send any of nine signals (`SIGTERM`…`SIGUSR2`) behind a confirmation prompt; the status line distinguishes **delivered** from **permission denied** (signalling another user's process needs `sudo`) and **already‑exited**, so a failed signal explains itself instead of silently doing nothing |
 | 🌐 **Network + connections** | per‑interface rx/tx braille graph; a live TCP/UDP table mapping sockets → process (`n`) |
 | 🗄️ **Disk + sensors** | per‑mount usage, read/write I/O graph, temperatures, battery |
+| ⏺️ **Flight recorder** | `--record` writes JSONL snapshots per tick; `--replay` scrubs them in the full TUI on any machine |
 | 🎨 **Seven themes & layouts** | `gruvbox` · `nord` · `dracula` · `tokyonight` · `matrix` · `cyberpunk` · `paper` (light terminals); `full`/`cpu`/`process` presets |
 | 🪶 **Tiny & safe** | ~1 MB binary, zero runtime deps, adaptive 250‑col→tiny layout, restores your terminal even on panic |
 
@@ -411,6 +412,30 @@ source completions/toptop.bash                    # bash (or copy to /etc/bash_c
 cp completions/_toptop ~/.zfunc/                  # zsh  (ensure ~/.zfunc is on your $fpath)
 cp completions/toptop.fish ~/.config/fish/completions/   # fish
 ```
+
+## ⏺️ Record & replay
+
+"The GPU throttled ten minutes ago — what happened?" toptop keeps 256 in-memory
+samples and forgets everything on exit. `--record` turns it into a flight
+recorder:
+
+```bash
+toptop --record incident.jsonl          # one JSON snapshot per tick, ● REC in the header
+toptop --replay incident.jsonl          # scrub it in the normal TUI
+```
+
+In replay mode the footer becomes a transport bar — **space** pauses, **←/→**
+step frame by frame (stepping implies pausing), **q** quits. Every panel you
+know renders from the recording: GPU, VRAM, the AI view, alerts, the process
+table.
+
+The format is JSONL — exactly the `--export json` document, one line per tick,
+each carrying a `schema_version`. That means a recording is also just data:
+`jq` it, attach it to a bug report, or replay a GPU incident on a laptop that
+has no GPU at all. A recording killed mid-write ends in a partial line, which
+is skipped and counted rather than losing the file. Recordings keep 100 process
+rows per frame, not the export's top 20 — a flight recorder that dropped a
+process the moment it stopped being the busiest would lose the culprit.
 
 ## 📦 Config
 
