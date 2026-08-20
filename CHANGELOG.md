@@ -117,6 +117,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mismatch is reported on stderr, and a failing write stops recording with a
   visible status instead of silently truncating. The header shows `● REC`
   while recording. (#12)
+- **Basic Windows support** — toptop now builds and runs on Windows, with a
+  `windows-latest` build+test job in CI to keep it that way. `libc` became a
+  Unix-only dependency; signal delivery and renicing are split per platform
+  (Windows goes through the sysinfo process API, offers *Terminate* only, and
+  reports renicing as unsupported rather than silently doing nothing). The
+  `/proc`-based connections inspector and inference-server discovery stay
+  Linux-only but now explain themselves instead of rendering an empty panel —
+  on macOS too. Native Windows equivalents remain open. (#45, partial)
 - **CI hardening** — the workflow now also runs a `macos-latest` build+test job
   (the README advertises macOS as verified; this keeps it true), an MSRV job
   pinned to the advertised Rust 1.82, and `cargo audit` over the dependency

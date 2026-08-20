@@ -759,6 +759,12 @@ impl App {
                 "Permission denied renicing {} ({}) — lowering nice needs root",
                 name, pid
             ),
+            PriorityOutcome::Unsupported => {
+                format!(
+                    "Renicing {} ({}) isn't supported on this platform",
+                    name, pid
+                )
+            }
             PriorityOutcome::Gone => format!("{} ({}) already exited", name, pid),
         };
         self.set_status(msg);

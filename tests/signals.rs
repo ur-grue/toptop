@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Signal delivery: the reported "signalling doesn't work" symptom.
 
 use std::process::Command;
