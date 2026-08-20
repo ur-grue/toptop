@@ -37,6 +37,11 @@ pub struct Theme {
     /// Panel background (used sparingly; mostly transparent).
     pub bg: Option<Rgb>,
     /// Dimmed text (labels, units, inactive items).
+    ///
+    /// "Dim" is a visual weight, not permission to be unreadable: this colour
+    /// carries units, key hints, the alert timeline's ages and the diagnosis
+    /// evidence. Every built-in keeps it at WCAG AA (4.5:1) against its own
+    /// background — see `dim_text_stays_legible`.
     pub dim: Rgb,
     /// Accent used for titles and the logo.
     pub accent: Rgb,
@@ -183,7 +188,7 @@ pub static BUILTINS: &[Theme] = &[
         name: "dracula",
         fg: rgb(248, 248, 242),
         bg: None,
-        dim: rgb(98, 114, 164),
+        dim: rgb(107, 124, 179),
         accent: rgb(189, 147, 249),
         accent2: rgb(139, 233, 253),
         border: rgb(68, 71, 90),
@@ -201,7 +206,7 @@ pub static BUILTINS: &[Theme] = &[
         name: "tokyonight",
         fg: rgb(192, 202, 245),
         bg: None,
-        dim: rgb(86, 95, 137),
+        dim: rgb(111, 122, 176),
         accent: rgb(122, 162, 247),
         accent2: rgb(125, 207, 255),
         border: rgb(41, 46, 66),
@@ -219,7 +224,7 @@ pub static BUILTINS: &[Theme] = &[
         name: "matrix",
         fg: rgb(0, 200, 0),
         bg: Some(rgb(0, 0, 0)),
-        dim: rgb(0, 90, 0),
+        dim: rgb(0, 139, 0),
         accent: rgb(57, 255, 20),
         accent2: rgb(120, 255, 120),
         border: rgb(0, 70, 0),
@@ -237,7 +242,7 @@ pub static BUILTINS: &[Theme] = &[
         name: "cyberpunk",
         fg: rgb(220, 235, 255),
         bg: Some(rgb(13, 6, 26)), // deep near-black violet
-        dim: rgb(110, 92, 160),
+        dim: rgb(130, 109, 189),
         accent: rgb(255, 46, 151), // neon magenta
         accent2: rgb(0, 240, 255), // electric cyan
         border: rgb(58, 42, 93),
@@ -256,7 +261,7 @@ pub static BUILTINS: &[Theme] = &[
         name: "paper",
         fg: rgb(40, 42, 54),
         bg: None, // keep the terminal's light background
-        dim: rgb(125, 128, 140),
+        dim: rgb(114, 116, 127),
         accent: rgb(156, 39, 143), // deep magenta
         accent2: rgb(2, 105, 160), // deep teal-blue
         border: rgb(175, 178, 190),
@@ -278,6 +283,18 @@ pub static BUILTINS: &[Theme] = &[
 /// disk. Populated once by [`init_user_themes`]; falls back to the built-ins
 /// when nothing was loaded (tests, `--export`, library use).
 static REGISTRY: OnceLock<Vec<Theme>> = OnceLock::new();
+
+/// Index of the theme a fresh install starts on.
+///
+/// Resolved against [`BUILTINS`] rather than [`themes`] on purpose: the
+/// registry initializes lazily, and touching it here would lock it to the
+/// built-ins before `init_user_themes` had a chance to run.
+pub fn default_index() -> usize {
+    BUILTINS
+        .iter()
+        .position(|t| t.name == "cyberpunk")
+        .unwrap_or(0)
+}
 
 /// All themes available at runtime, in cycle order.
 pub fn themes() -> &'static [Theme] {
@@ -503,6 +520,95 @@ mod tests {
         assert!(warnings.iter().any(|w| w.contains("name already taken")));
         // A built-in must not be replaced by a same-named user file.
         assert_eq!(index_by_name("gruvbox"), Some(0));
+    }
+
+    /// Relative luminance, per WCAG 2.x.
+    fn luminance(c: Rgb) -> f64 {
+        let channel = |v: u8| {
+            let v = v as f64 / 255.0;
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(c.0) + 0.7152 * channel(c.1) + 0.0722 * channel(c.2)
+    }
+
+    /// WCAG contrast ratio between two colors, 1.0 (identical) to 21.0.
+    fn contrast(a: Rgb, b: Rgb) -> f64 {
+        let (la, lb) = (luminance(a), luminance(b));
+        let (hi, lo) = if la > lb { (la, lb) } else { (lb, la) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    /// The background a theme is read against: its own when it sets one,
+    /// otherwise the terminal's — assumed near-black for dark themes and
+    /// near-white for the light one.
+    fn assumed_bg(t: &Theme) -> Rgb {
+        t.bg.unwrap_or(if t.name == "paper" {
+            Rgb(255, 255, 255)
+        } else {
+            Rgb(16, 16, 16)
+        })
+    }
+
+    #[test]
+    fn body_text_is_high_contrast() {
+        for t in BUILTINS {
+            let r = contrast(t.fg, assumed_bg(t));
+            assert!(
+                r >= 7.0,
+                "{}: body text at {r:.1}:1 — below WCAG AAA",
+                t.name
+            );
+        }
+    }
+
+    #[test]
+    fn dim_text_stays_legible() {
+        // "Dim" is a visual weight, not permission to be unreadable: this
+        // colour carries units, key hints, the alert timeline's relative ages
+        // and the diagnosis evidence line.
+        for t in BUILTINS {
+            let r = contrast(t.dim, assumed_bg(t));
+            assert!(
+                r >= 4.5,
+                "{}: dim text at {r:.1}:1 — below WCAG AA for body text",
+                t.name
+            );
+        }
+    }
+
+    #[test]
+    fn accents_are_legible_as_text() {
+        // Accents title panels and mark selections — large-ish text and UI
+        // elements, so AA's 3:1 is the right bar rather than 4.5.
+        for t in BUILTINS {
+            let bg = assumed_bg(t);
+            for (label, c) in [("accent", t.accent), ("accent2", t.accent2)] {
+                let r = contrast(c, bg);
+                assert!(r >= 3.0, "{}: {label} at {r:.1}:1 — below WCAG AA", t.name);
+            }
+        }
+    }
+
+    #[test]
+    fn gradients_stay_visible_across_their_range() {
+        // A gradient that dips into the background at any point makes a meter
+        // look broken at exactly the load where you are watching it.
+        for t in BUILTINS {
+            let bg = assumed_bg(t);
+            for step in 0..=20 {
+                let v = step as f32 / 20.0;
+                let r = contrast(t.grad_rgb(v), bg);
+                assert!(
+                    r >= 2.0,
+                    "{}: gradient at {v:.2} is {r:.1}:1 against the background",
+                    t.name
+                );
+            }
+        }
     }
 
     #[test]

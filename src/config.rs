@@ -53,7 +53,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tick_ms: 1500,
-            theme_idx: 0,
+            theme_idx: theme::default_index(),
             tree: false,
             per_core: true,
             layout: LayoutPreset::Full,
@@ -258,6 +258,8 @@ mod tests {
         let c = Config::default();
         assert!(c.tick_ms >= 100);
         assert!(c.theme_idx < theme::themes().len());
+        // A fresh install starts on the theme the project's own artwork uses.
+        assert_eq!(theme::themes()[c.theme_idx].name, "cyberpunk");
     }
 
     #[test]
