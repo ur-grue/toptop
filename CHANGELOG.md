@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Diagnosis panel** — the AI view now leads with a verdict rather than more
+  numbers: `MEMORY-BANDWIDTH BOUND`, `KV CACHE THRASHING`, `QUEUE-BOUND, GPU
+  UNDER-FED`, `VRAM EXHAUSTED`, `COMPUTE BOUND`, `GPU THROTTLING`,
+  `DATA-LOADER BOUND`. Each states the evidence it rests on (so it can be
+  checked rather than believed) and what to change. The rules are pure
+  functions of a collector snapshot, unit-tested without a GPU, and
+  deliberately conservative — a GPU that reports no utilization yields no
+  verdict rather than an invented one, and when nothing fits, the panel says
+  so instead of going quiet.
+
 ### Fixed
 
 - **The AI view no longer clips facts at the panel border.** The per-server

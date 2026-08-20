@@ -1256,6 +1256,36 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
     let bw = (inner.width as usize).saturating_sub(26).clamp(6, 30);
 
     // Firing alerts get top billing — this is the inference health banner.
+    // The verdict first: every panel below reports numbers, this says what
+    // they mean together. Deliberately at most a few lines — a diagnosis that
+    // needs scrolling isn't one.
+    let findings = crate::diagnose::diagnose(c);
+    if !findings.is_empty() {
+        for f in findings.iter().take(3) {
+            let hot = f.severity == crate::alerts::Level::Crit;
+            lines.push(Line::from(vec![
+                Span::styled(
+                    if hot { "▲ " } else { "◆ " },
+                    Style::default().fg(theme.grad(if hot { 1.0 } else { 0.6 })),
+                ),
+                Span::styled(
+                    f.headline,
+                    Style::default()
+                        .fg(theme.grad(if hot { 1.0 } else { 0.6 }))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("   {}", f.evidence), dim(theme)),
+            ]));
+            lines.extend(wrap_text(
+                &format!("→ {}", f.advice),
+                Style::default().fg(theme.fg.color()),
+                inner.width as usize,
+                "  ",
+            ));
+        }
+        lines.push(Line::from(Span::raw("")));
+    }
+
     if !app.alerts.is_empty() {
         lines.push(Line::from(Span::styled(
             "⚠ ALERTS",
@@ -1768,6 +1798,36 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
     let target = block.inner(rect);
     f.render_widget(block, rect);
     f.render_widget(Paragraph::new(Text::from(lines)), target);
+}
+
+/// Wrap a single styled string across lines at word boundaries, indenting
+/// continuations. For prose (diagnosis advice), where splitting between whole
+/// spans isn't enough because the whole paragraph is one span.
+fn wrap_text(text: &str, style: Style, width: usize, indent: &str) -> Vec<Line<'static>> {
+    let usable = width.saturating_sub(indent.chars().count()).max(8);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let extra = if current.is_empty() { 0 } else { 1 };
+        if current.chars().count() + extra + word.chars().count() > usable && !current.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("{indent}{current}"),
+                style,
+            )));
+            current.clear();
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!("{indent}{current}"),
+            style,
+        )));
+    }
+    lines
 }
 
 /// Pack `spans` into lines of at most `width` cells, indenting continuations

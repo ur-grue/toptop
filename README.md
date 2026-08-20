@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-168%20green-success)
+![Tests](https://img.shields.io/badge/tests-177%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -133,6 +133,7 @@ sensors, battery, seven themes — all in a single **~1 MB binary with zero runt
 | 🌐 **Network + connections** | per‑interface rx/tx braille graph; a live TCP/UDP table mapping sockets → process (`n`) |
 | 🗄️ **Disk + sensors** | per‑mount usage, read/write I/O graph, temperatures, battery |
 | 📊 **Inference SLO triad** | TTFT and TPOT p50/p95/p99 from vLLM/TGI/TensorRT-LLM/SGLang histograms, plus the prefill-vs-decode phase mix |
+| 🔎 **Diagnosis, not just numbers** | Reads the signals together and names the bottleneck — bandwidth-bound, KV thrashing, queue-starved, spilled, throttled — with the evidence and what to change |
 | ⟲ **KV-cache preemption** | The signal no other tool shows: requests thrown away and recomputed because the cache ran out — a critical alert, not a footnote |
 | 📉 **Compute vs bandwidth over time** | A mirrored braille graph per GPU: compute above the line, memory bandwidth below. The divergence *is* the diagnosis |
 | ⏺️ **Flight recorder** | `--record` writes JSONL snapshots per tick; `--replay` scrubs them in the full TUI on any machine |
@@ -432,6 +433,31 @@ source completions/toptop.bash                    # bash (or copy to /etc/bash_c
 cp completions/_toptop ~/.zfunc/                  # zsh  (ensure ~/.zfunc is on your $fpath)
 cp completions/toptop.fish ~/.config/fish/completions/   # fish
 ```
+
+### The diagnosis: *why* is it slow?
+
+Every other panel reports numbers. The AI view leads with what they **mean**
+together — because the diagnostic value of inference telemetry is almost
+entirely in the combinations. A GPU at 31% compute is meaningless alone,
+damning next to 94% memory bandwidth, and irrelevant next to a server that is
+preempting:
+
+```
+▲ KV CACHE THRASHING   vLLM:8000 preempting 1.2/s
+  → Requests are being evicted mid-flight and recomputed. Lower the max
+  concurrent sequences, or give the cache more room (higher
+  gpu-memory-utilization, shorter max context).
+◆ MEMORY-BANDWIDTH BOUND   bandwidth 94% · compute 31%
+  → Token generation is limited by memory bandwidth, not compute — a faster
+  GPU core would not help. Quantize further, or batch more requests so each
+  weight read serves more tokens.
+```
+
+Each verdict states the evidence it rests on, so you can check it rather than
+believe it. The rules cover VRAM exhaustion, KV-cache thrashing, queue-bound
+under-feeding, the bandwidth-vs-compute split, throttling and the classic
+training data-loader bottleneck — and when none of them fit, it says so instead
+of going quiet.
 
 ### KV-cache preemption — the metric nothing else surfaces
 

@@ -692,3 +692,48 @@ fn the_ai_view_wraps_instead_of_clipping() {
         "a GPU reporting no utilization drew a trend over blank rows:\n{joined}"
     );
 }
+
+/// The diagnosis panel must state a verdict, its evidence and its advice — and
+/// wrap the advice rather than clipping it.
+#[test]
+fn the_ai_view_leads_with_a_diagnosis() {
+    use toptop::metrics::ServerStats;
+
+    let mut app = App::new(&Config::default());
+    // The defining case: bandwidth pinned, compute idle.
+    app.collector.gpus = vec![toptop::metrics::gpu::Gpu {
+        name: "NVIDIA GeForce RTX 4090".into(),
+        util_pct: 31.0,
+        has_util: true,
+        mem_util: 94.0,
+        has_mem_util: true,
+        mem_used: 12 * 1024 * 1024 * 1024,
+        mem_total: 24 * 1024 * 1024 * 1024,
+        temp: 65.0,
+        power: 290.0,
+        power_limit: 450.0,
+        throttled: false,
+    }];
+    app.collector.servers = vec![ServerStats {
+        runtime: "vLLM",
+        port: 8000,
+        gen_tps: Some(40.0),
+        ..Default::default()
+    }];
+    app.show_ai = true;
+    let joined = render_text(&mut app, 118, 40).join("\n");
+
+    assert!(
+        joined.contains("MEMORY-BANDWIDTH BOUND"),
+        "no verdict:\n{joined}"
+    );
+    // The evidence must be there so the verdict can be checked, not believed.
+    assert!(joined.contains("bandwidth 94%"), "no evidence:\n{joined}");
+    // The advice must survive to its end rather than being clipped at the
+    // border — the last sentence is the actionable part. It wraps across
+    // lines, so assert on its final clause.
+    assert!(
+        joined.contains("weight read serves more tokens"),
+        "the advice was clipped before its end:\n{joined}"
+    );
+}
