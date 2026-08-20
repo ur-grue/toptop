@@ -6,12 +6,16 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
 
 ## 0. Pre-flight checklist
 
-- [ ] `git tag -a v1.0.0 && git push origin v1.0.0` (triggers the release
-      workflow → tarball + .deb attached to the GitHub Release)
+- [x] `git tag -a v1.0.0 && git push origin v1.0.0` (triggers the release
+      workflow → tarball + .deb attached to the GitHub Release). Done for
+      v1.0.0 and v1.0.1; both have a tarball + .deb attached.
 - [x] Homebrew: the main repo is its own tap (`Formula/toptop.rb`, pinned to
-      v1.0.0) — `brew tap ur-grue/toptop https://github.com/ur-grue/toptop`.
-      Optionally create `ur-grue/homebrew-tap` later for the shorter
-      `brew install ur-grue/tap/toptop` form.
+      v1.0.1, sha256 verified against the GitHub tarball) — `brew tap
+      ur-grue/toptop https://github.com/ur-grue/toptop`. Optionally create
+      `ur-grue/homebrew-tap` later for the shorter `brew install
+      ur-grue/tap/toptop` form.
+      **Re-pin `url` + `sha256` on every release** — a stale formula installs
+      an old version on the first wave of traffic.
 - [ ] Upload `assets/social-preview.png` as the repo social-preview image (Settings → General → Social preview): upload
       a render of `assets/ai-demo.svg` — it's what shows when the link is shared
 - [ ] Verify README renders correctly on github.com/ur-grue/toptop (banner,
@@ -81,7 +85,9 @@ JSON parser + hand-rolled HTTP + ratatui, 65 tests, headless TUI testing).
 - **This Week in Rust** — submit to the "Crate of the Week" thread
 - **awesome-lists PRs**: awesome-rust (Utilities), awesome-selfhosted,
   awesome-llm / awesome-local-llm lists, terminal-apps lists
-- **crates.io**: `cargo publish` (metadata already set) → free discovery
+- **crates.io**: `cargo publish` (metadata already set) → free discovery.
+  Do this *before* the Show HN post — "is it on crates.io?" is always the
+  first comment.
 - **Ollama / vLLM Discords** — share in #show-and-tell style channels, framed
   as "a debugging tool for you", not an ad
 

@@ -8,11 +8,12 @@ use sysinfo::Signal;
 
 use crate::alerts::{self, Alert, AlertConfig};
 use crate::config::Config;
+use crate::keys::{Action, KeyMap};
 use crate::metrics::{
     signal_name, Collector, Connection, PriorityOutcome, ProcDetail, ProcInfo, SignalOutcome,
     SIGNALS,
 };
-use crate::theme::{Theme, THEMES};
+use crate::theme::{self, Theme};
 
 /// Process table sort columns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +53,116 @@ impl SortField {
             SortField::Time => SortField::Io,
             SortField::Io => SortField::Gpu,
             SortField::Gpu => SortField::Cpu,
+        }
+    }
+}
+
+/// A process-table column.
+///
+/// The configured list drives the header, the row cells and the click-to-sort
+/// mapping in `ui::render_procs` — see the `columns` config key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProcColumn {
+    Pid,
+    User,
+    Cpu,
+    MemPct,
+    Mem,
+    Disk,
+    Vram,
+    Time,
+    State,
+    Command,
+}
+
+/// The column set shown when the config says nothing.
+pub const DEFAULT_COLUMNS: &[ProcColumn] = &[
+    ProcColumn::Pid,
+    ProcColumn::User,
+    ProcColumn::Cpu,
+    ProcColumn::MemPct,
+    ProcColumn::Mem,
+    ProcColumn::Disk,
+    ProcColumn::Vram,
+    ProcColumn::Time,
+    ProcColumn::State,
+    ProcColumn::Command,
+];
+
+impl ProcColumn {
+    /// Config name, also used when the column set is persisted.
+    pub fn name(self) -> &'static str {
+        match self {
+            ProcColumn::Pid => "pid",
+            ProcColumn::User => "user",
+            ProcColumn::Cpu => "cpu",
+            ProcColumn::MemPct => "mem%",
+            ProcColumn::Mem => "mem",
+            ProcColumn::Disk => "disk",
+            ProcColumn::Vram => "vram",
+            ProcColumn::Time => "time",
+            ProcColumn::State => "state",
+            ProcColumn::Command => "command",
+        }
+    }
+
+    /// Header label.
+    pub fn header(self) -> &'static str {
+        match self {
+            ProcColumn::Pid => "PID",
+            ProcColumn::User => "USER",
+            ProcColumn::Cpu => "CPU%",
+            ProcColumn::MemPct => "MEM%",
+            ProcColumn::Mem => "MEM",
+            ProcColumn::Disk => "DISK",
+            ProcColumn::Vram => "VRAM",
+            ProcColumn::Time => "TIME",
+            ProcColumn::State => "S",
+            ProcColumn::Command => "COMMAND",
+        }
+    }
+
+    /// Fixed width in cells, or `None` for the column that takes the rest.
+    pub fn width(self) -> Option<u16> {
+        match self {
+            ProcColumn::Pid => Some(7),
+            ProcColumn::User => Some(9),
+            ProcColumn::Cpu | ProcColumn::MemPct => Some(5),
+            ProcColumn::Mem | ProcColumn::Vram | ProcColumn::Time => Some(7),
+            ProcColumn::Disk => Some(8),
+            ProcColumn::State => Some(1),
+            ProcColumn::Command => None,
+        }
+    }
+
+    /// Sort field a click on this header selects, if the column is sortable.
+    pub fn sort_field(self) -> Option<SortField> {
+        match self {
+            ProcColumn::Pid => Some(SortField::Pid),
+            ProcColumn::User => Some(SortField::User),
+            ProcColumn::Cpu => Some(SortField::Cpu),
+            ProcColumn::MemPct | ProcColumn::Mem => Some(SortField::Mem),
+            ProcColumn::Disk => Some(SortField::Io),
+            ProcColumn::Vram => Some(SortField::Gpu),
+            ProcColumn::Time => Some(SortField::Time),
+            ProcColumn::Command => Some(SortField::Name),
+            ProcColumn::State => None,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "pid" => Some(ProcColumn::Pid),
+            "user" => Some(ProcColumn::User),
+            "cpu" | "cpu%" => Some(ProcColumn::Cpu),
+            "mem%" | "mempct" => Some(ProcColumn::MemPct),
+            "mem" | "rss" => Some(ProcColumn::Mem),
+            "disk" | "io" => Some(ProcColumn::Disk),
+            "vram" | "gpu" => Some(ProcColumn::Vram),
+            "time" => Some(ProcColumn::Time),
+            "state" | "s" => Some(ProcColumn::State),
+            "command" | "cmd" => Some(ProcColumn::Command),
+            _ => None,
         }
     }
 }
@@ -133,6 +244,10 @@ pub struct App {
 
     pub sort: SortField,
     pub sort_desc: bool,
+    /// Process-table columns, in display order (from the config).
+    pub columns: Vec<ProcColumn>,
+    /// Key → action bindings (from the config).
+    pub keys: KeyMap,
     pub filter: String,
     pub filter_mode: bool,
 
@@ -180,7 +295,7 @@ impl App {
         let collector = Collector::new(history_len);
         let mut app = Self {
             collector,
-            theme_idx: cfg.theme_idx.min(THEMES.len() - 1),
+            theme_idx: cfg.theme_idx.min(theme::themes().len() - 1),
             tick: Duration::from_millis(cfg.tick_ms),
             should_quit: false,
             paused: false,
@@ -190,6 +305,8 @@ impl App {
             layout: cfg.layout,
             sort: SortField::Cpu,
             sort_desc: true,
+            columns: cfg.columns.clone(),
+            keys: cfg.keys.clone(),
             filter: String::new(),
             filter_mode: false,
             proc_view: Vec::new(),
@@ -221,7 +338,7 @@ impl App {
     }
 
     pub fn theme(&self) -> &'static Theme {
-        &THEMES[self.theme_idx]
+        &theme::themes()[self.theme_idx]
     }
 
     /// Snapshot of the config for persistence on exit.
@@ -232,6 +349,9 @@ impl App {
             tree: self.tree,
             per_core: self.per_core,
             layout: self.layout,
+            columns: self.columns.clone(),
+            keys: self.keys.clone(),
+            warnings: Vec::new(),
             alerts: self.alert_cfg.clone(),
         }
     }
@@ -460,7 +580,7 @@ impl App {
     }
 
     fn cycle_theme(&mut self, forward: bool) {
-        let n = THEMES.len();
+        let n = theme::themes().len();
         self.theme_idx = if forward {
             (self.theme_idx + 1) % n
         } else {
@@ -644,94 +764,102 @@ impl App {
 
         // Connections view captures navigation while open.
         if self.show_conn {
-            match key.code {
-                KeyCode::Char('q') => self.should_quit = true,
-                KeyCode::Esc | KeyCode::Char('n') => self.show_conn = false,
-                KeyCode::Up | KeyCode::Char('k') => self.scroll_conn(-1),
-                KeyCode::Down | KeyCode::Char('j') => self.scroll_conn(1),
-                KeyCode::PageUp => self.scroll_conn(-(self.conn_rows.max(1) as isize)),
-                KeyCode::PageDown => self.scroll_conn(self.conn_rows.max(1) as isize),
-                KeyCode::Home | KeyCode::Char('g') => self.conn_offset = 0,
-                KeyCode::End | KeyCode::Char('G') => {
+            if key.code == KeyCode::Esc {
+                self.show_conn = false;
+                return;
+            }
+            match self.keys.action(key) {
+                Some(Action::Quit) => self.should_quit = true,
+                Some(Action::Connections) => self.show_conn = false,
+                Some(Action::Up) => self.scroll_conn(-1),
+                Some(Action::Down) => self.scroll_conn(1),
+                Some(Action::PageUp) => self.scroll_conn(-(self.conn_rows.max(1) as isize)),
+                Some(Action::PageDown) => self.scroll_conn(self.conn_rows.max(1) as isize),
+                Some(Action::First) => self.conn_offset = 0,
+                Some(Action::Last) => {
                     self.conn_offset = self.connections.len().saturating_sub(self.conn_rows.max(1))
                 }
-                KeyCode::Char('p') => self.cycle_theme(true),
+                Some(Action::ThemeNext) => self.cycle_theme(true),
+                Some(Action::ThemePrev) => self.cycle_theme(false),
                 _ => {}
             }
             return;
         }
 
-        match key.code {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Esc => {
-                // Esc peels back overlays in order, then clears a filter, then quits.
-                if self.show_ai {
-                    self.show_ai = false;
-                } else if self.show_detail {
-                    self.show_detail = false;
-                } else if !self.filter.is_empty() {
-                    self.filter.clear();
-                    self.rebuild_proc_view();
-                } else {
-                    self.should_quit = true;
-                }
+        // Esc peels back overlays in order, then clears a filter, then quits.
+        // Deliberately not rebindable — it is the way out of every overlay.
+        if key.code == KeyCode::Esc {
+            if self.show_ai {
+                self.show_ai = false;
+            } else if self.show_detail {
+                self.show_detail = false;
+            } else if !self.filter.is_empty() {
+                self.filter.clear();
+                self.rebuild_proc_view();
+            } else {
+                self.should_quit = true;
             }
-            KeyCode::Enter => {
+            return;
+        }
+
+        match self.keys.action(key) {
+            Some(Action::Quit) => self.should_quit = true,
+            Some(Action::Detail) => {
                 self.show_detail = !self.show_detail;
                 // Fetch immediately so the overlay is never blank for a tick.
                 self.refresh_detail();
             }
-            KeyCode::Char('?') | KeyCode::F(1) => self.show_help = true,
-            KeyCode::Char(' ') => {
+            Some(Action::Help) => self.show_help = true,
+            Some(Action::Pause) => {
                 self.paused = !self.paused;
                 self.set_status(if self.paused { "Paused" } else { "Resumed" });
             }
-            KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
-            KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
-            KeyCode::PageUp => self.move_selection(-(self.proc_rows.max(1) as isize)),
-            KeyCode::PageDown => self.move_selection(self.proc_rows.max(1) as isize),
-            KeyCode::Home | KeyCode::Char('g') => self.select_first(),
-            KeyCode::End | KeyCode::Char('G') => self.select_last(),
-            KeyCode::Char('s') => {
+            Some(Action::Up) => self.move_selection(-1),
+            Some(Action::Down) => self.move_selection(1),
+            Some(Action::PageUp) => self.move_selection(-(self.proc_rows.max(1) as isize)),
+            Some(Action::PageDown) => self.move_selection(self.proc_rows.max(1) as isize),
+            Some(Action::First) => self.select_first(),
+            Some(Action::Last) => self.select_last(),
+            Some(Action::SortNext) => {
                 self.sort = self.sort.next();
                 self.set_status(format!("Sort: {}", self.sort.label()));
                 self.rebuild_proc_view();
             }
-            KeyCode::Char('i') => {
+            Some(Action::SortInvert) => {
                 self.sort_desc = !self.sort_desc;
                 self.rebuild_proc_view();
             }
-            KeyCode::Char('t') => {
+            Some(Action::Tree) => {
                 self.tree = !self.tree;
                 self.set_status(if self.tree { "Tree view" } else { "Flat view" });
                 self.rebuild_proc_view();
             }
-            KeyCode::Char('e') => {
+            Some(Action::PerCore) => {
                 self.per_core = !self.per_core;
             }
-            KeyCode::Char('L') => {
+            Some(Action::Layout) => {
                 self.layout = self.layout.next();
                 self.set_status(format!("Layout: {}", self.layout.label()));
             }
-            KeyCode::Char('n') => {
+            Some(Action::Connections) => {
                 self.show_conn = true;
                 self.conn_offset = 0;
                 self.refresh_connections();
             }
-            KeyCode::Char('a') => self.show_ai = !self.show_ai,
-            KeyCode::Char('p') => self.cycle_theme(true),
-            KeyCode::Char('P') => self.cycle_theme(false),
-            KeyCode::Char('+') | KeyCode::Char('=') => self.adjust_tick(true),
-            KeyCode::Char('-') | KeyCode::Char('_') => self.adjust_tick(false),
-            KeyCode::Char('/') => {
+            Some(Action::Ai) => self.show_ai = !self.show_ai,
+            Some(Action::ThemeNext) => self.cycle_theme(true),
+            Some(Action::ThemePrev) => self.cycle_theme(false),
+            Some(Action::TickUp) => self.adjust_tick(true),
+            Some(Action::TickDown) => self.adjust_tick(false),
+            Some(Action::Filter) => {
                 self.filter_mode = true;
                 self.set_status("Filter: type to match, Enter to apply, Esc to clear");
             }
-            KeyCode::Char('K') | KeyCode::F(9) => self.open_signal_menu(),
-            KeyCode::Char('r') => self.open_renice_menu(),
-            KeyCode::Delete => self.request_kill(Signal::Term),
-            KeyCode::Char('x') => self.request_kill(Signal::Kill),
-            _ => {}
+            Some(Action::Kill) => self.open_signal_menu(),
+            Some(Action::Renice) => self.open_renice_menu(),
+            Some(Action::SigTerm) => self.request_kill(Signal::Term),
+            Some(Action::SigKill) => self.request_kill(Signal::Kill),
+            None => {}
         }
     }
 
@@ -755,7 +883,7 @@ impl App {
                 let area = self.proc_area;
                 // Header row sits one line above the data rows: click to sort.
                 if area.height > 0 && ev.row + 1 == area.y && ev.column >= area.x {
-                    if let Some(field) = header_sort_at(ev.column - area.x) {
+                    if let Some(field) = header_sort_at(&self.columns, ev.column - area.x) {
                         if self.sort == field {
                             self.sort_desc = !self.sort_desc;
                         } else {
@@ -784,19 +912,23 @@ impl App {
 }
 
 /// Map a column-relative x offset on the process header to its sort field.
-/// Ranges mirror the table column widths in `ui::render_procs`.
-pub fn header_sort_at(rel_x: u16) -> Option<SortField> {
-    match rel_x {
-        0..=7 => Some(SortField::Pid),
-        8..=17 => Some(SortField::User),
-        18..=23 => Some(SortField::Cpu),
-        24..=37 => Some(SortField::Mem),
-        38..=46 => Some(SortField::Io),
-        47..=54 => Some(SortField::Gpu),
-        55..=62 => Some(SortField::Time),
-        63..=64 => None,
-        _ => Some(SortField::Name),
+/// Walks the configured columns, mirroring the widths (plus the one-cell
+/// column spacing) that `ui::render_procs` hands to the table.
+pub fn header_sort_at(columns: &[ProcColumn], rel_x: u16) -> Option<SortField> {
+    let mut x = 0u16;
+    for col in columns {
+        match col.width() {
+            // The flexible column runs to the right edge of the table.
+            None => return col.sort_field(),
+            Some(w) => {
+                x = x.saturating_add(w).saturating_add(1); // + column spacing
+                if rel_x < x {
+                    return col.sort_field();
+                }
+            }
+        }
     }
+    None
 }
 
 #[cfg(test)]
@@ -1010,10 +1142,11 @@ mod tests {
 
     #[test]
     fn header_click_map_matches_column_layout() {
-        assert_eq!(header_sort_at(0), Some(SortField::Pid));
-        assert_eq!(header_sort_at(18), Some(SortField::Cpu));
-        assert_eq!(header_sort_at(40), Some(SortField::Io));
-        assert_eq!(header_sort_at(63), None);
-        assert_eq!(header_sort_at(120), Some(SortField::Name));
+        let cols = DEFAULT_COLUMNS;
+        assert_eq!(header_sort_at(cols, 0), Some(SortField::Pid));
+        assert_eq!(header_sort_at(cols, 18), Some(SortField::Cpu));
+        assert_eq!(header_sort_at(cols, 40), Some(SortField::Io));
+        assert_eq!(header_sort_at(cols, 63), None);
+        assert_eq!(header_sort_at(cols, 120), Some(SortField::Name));
     }
 }
