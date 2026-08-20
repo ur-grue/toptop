@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Prebuilt binaries for every supported platform.** The release workflow built
+  only x86_64 Linux, so macOS and Windows users — both of whom the README
+  invites — had no path but cloning the repo and compiling. It is now a matrix
+  over x86_64/aarch64 Linux, Apple Silicon and Intel macOS, and x86_64 Windows,
+  each built on its own native runner and smoke-tested (`--version` and a real
+  `--snapshot`) before it is published. A `dry_run` input exercises the whole
+  pipeline without creating a release. (#8, partial)
+- **`install.sh`** — `curl -fsSL …/install.sh | sh` detects the platform,
+  fetches the right asset, **verifies the binary runs before putting it on your
+  PATH**, and installs to a writable directory already on PATH (never silently
+  sudo). POSIX sh, checked by shellcheck in CI, with actionable messages for
+  unsupported platforms and missing builds.
+
+### Changed
+
+- **The README leads with how to get it.** Install was 40% of the way down a
+  736-line document; there is now a one-line install and `toptop --demo`
+  directly under the hero, and the install section itself is binary-first with
+  a per-platform table instead of source-build-first.
 ### Changed
 
 - **The empty AI view points at `--demo`.** Opening it on a machine with no GPU
