@@ -42,6 +42,9 @@ jobs:
       - name: Release build
         run: cargo build --release
 
+      - name: Hot-path regression guard
+        run: cargo bench
+
   windows:
     # Windows support is best-effort: the process table, CPU/memory/network
     # rates and the NVIDIA GPU panel work, while the /proc-based bits
@@ -70,3 +73,62 @@ jobs:
 
       - name: Release build
         run: cargo build --release
+
+  macos:
+    # The README advertises macOS as verified; this is what keeps that true.
+    # The Linux-specific paths (/proc, /sys, nvidia-smi) degrade to empty
+    # panels there, which the tests assert rather than skip.
+    name: macos · build + test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+      - name: Tests
+        run: cargo test --all-features
+      - name: Release build
+        run: cargo build --release
+
+  msrv:
+    # rust-version in Cargo.toml and the README both promise 1.88. Without a
+    # job pinned to it the promise drifts silently — as it already had, by six
+    # releases: the advertised 1.82 stopped being true when ratatui 0.30 landed
+    # (its manifest needs edition2024, and ratatui-core itself requires 1.88).
+    # This job is what caught it.
+    name: msrv 1.88
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: msrv-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: msrv-cargo-
+      - name: Build with the advertised MSRV
+        run: cargo build --all-targets
+
+  audit:
+    # The dependency tree is tiny, so this costs seconds and catches an
+    # advisory against ratatui/crossterm/sysinfo the day it lands.
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit
+        run: cargo audit

@@ -1655,27 +1655,10 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
 
     // Detected AI workloads (serving + training), joined to CPU/RAM and — where
     // the PID matches a GPU compute process — VRAM.
-    let mut workloads: Vec<(crate::metrics::ai::Runtime, &crate::metrics::ProcInfo, u64)> = c
-        .procs
-        .iter()
-        .filter_map(|p| {
-            crate::metrics::ai::detect_runtime(&p.name, &p.cmd).map(|rt| {
-                let vram = c
-                    .gpu_procs
-                    .iter()
-                    .find(|gp| gp.pid == p.pid)
-                    .map(|gp| gp.used_mem)
-                    .unwrap_or(0);
-                (rt, p, vram)
-            })
-        })
-        .collect();
+    // Detected once per tick by `App::refresh_ai_workloads`, already sorted by
+    // CPU — scanning every command line here would cost milliseconds a frame.
+    let workloads = &app.ai_workloads;
     if !workloads.is_empty() {
-        workloads.sort_by(|a, b| {
-            b.1.cpu
-                .partial_cmp(&a.1.cpu)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
         lines.push(Line::from(Span::styled(
             "AI workloads",
             Style::default()
@@ -1690,10 +1673,11 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
             dim(theme),
         )));
         let cap = inner.height as usize;
-        for (rt, p, vram) in &workloads {
+        for w in workloads {
             if lines.len() >= cap {
                 break;
             }
+            let (rt, vram) = (&w.runtime, &w.vram);
             let kind = match rt.kind {
                 crate::metrics::ai::AiKind::Serving => "serve",
                 crate::metrics::ai::AiKind::Training => "train",
@@ -1701,16 +1685,16 @@ fn render_ai(f: &mut Frame, area: Rect, app: &App) {
             // A training process pinning a CPU while its GPU sits idle is the
             // classic data-loader bottleneck — flag it.
             let dataloader_bound = rt.kind == crate::metrics::ai::AiKind::Training
-                && p.cpu > 95.0
+                && w.cpu > 95.0
                 && c.gpus.iter().any(|g| g.has_util && g.util_pct < 35.0);
             let mut spans = vec![Span::styled(
                 format!(
                     "  {:<13} {:<6} {:>7} {:>5.1} {:>9} {:>9}",
                     truncate(rt.label, 13),
                     kind,
-                    p.pid,
-                    p.cpu,
-                    human_bytes(p.mem_bytes),
+                    w.pid,
+                    w.cpu,
+                    human_bytes(w.mem_bytes),
                     if *vram > 0 {
                         human_bytes(*vram)
                     } else {
