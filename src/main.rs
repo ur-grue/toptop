@@ -53,6 +53,8 @@ OPTIONS:
         --alert-vram <PCT>   VRAM % that triggers the spill-risk alert (default 90)
         --alert-kv <PCT>     KV-cache % considered saturated (default 95)
         --alert-queue <N>    Queued requests considered a backlog (default 8)
+        --alert-cmd <CMD>    Shell command run on every alert fire/resolve
+                             (TOPTOP_ALERT_{STATE,SEVERITY,KEY,DETAIL,MSG} in its env)
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -203,6 +205,13 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                     .parse::<f64>()
                     .map_err(|_| "--alert-kv value must be a number")?;
                 opts.cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
+            }
+            "--alert-cmd" => {
+                opts.cfg.notify.cmd = Some(
+                    args.next()
+                        .ok_or("--alert-cmd requires a shell command")?
+                        .clone(),
+                );
             }
             "--alert-queue" => {
                 let v = args
@@ -563,6 +572,16 @@ mod tests {
     fn tick_errors() {
         assert!(parse(&["--tick"]).unwrap_err().contains("requires"));
         assert!(parse(&["--tick", "abc"]).unwrap_err().contains("integer"));
+    }
+
+    #[test]
+    fn alert_cmd_flag() {
+        let o = parse(&["--alert-cmd", "notify-send $TOPTOP_ALERT_MSG"]).unwrap();
+        assert_eq!(
+            o.cfg.notify.cmd.as_deref(),
+            Some("notify-send $TOPTOP_ALERT_MSG")
+        );
+        assert!(parse(&["--alert-cmd"]).unwrap_err().contains("requires"));
     }
 
     #[test]

@@ -6,12 +6,13 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, Mou
 use ratatui::layout::Rect;
 use sysinfo::Signal;
 
-use crate::alerts::{self, Alert, AlertConfig};
+use crate::alerts::{self, Alert, AlertConfig, AlertTracker};
 use crate::config::Config;
 use crate::keys::{Action, KeyMap};
 use crate::metrics::{
     signal_name, Collector, Connection, PriorityOutcome, ProcInfo, SignalOutcome, SIGNALS,
 };
+use crate::notify::Notifier;
 use crate::theme::{self, Theme};
 
 /// Process table sort columns.
@@ -278,6 +279,14 @@ pub struct App {
     pub conn_rows: usize,
     /// Currently-firing threshold alerts (recomputed each tick).
     pub alerts: Vec<Alert>,
+    /// Turns each tick's alert set into debounced fire/resolve transitions.
+    pub tracker: AlertTracker,
+    /// Where those transitions are delivered (command and/or HTTP sinks).
+    pub notify: Notifier,
+    /// Whether the alert-history timeline overlay is shown.
+    pub show_alert_history: bool,
+    /// Flap-suppression window, kept for the config round-trip.
+    flap_window_secs: u64,
     /// `--demo` mode: overlay synthesized GPU + inference data each tick.
     pub demo: bool,
     demo_tick: u64,
@@ -322,6 +331,10 @@ impl App {
             conn_offset: 0,
             conn_rows: 0,
             alerts: Vec::new(),
+            tracker: AlertTracker::new(Duration::from_secs(cfg.flap_window_secs)),
+            notify: cfg.notify.clone(),
+            show_alert_history: false,
+            flap_window_secs: cfg.flap_window_secs,
             demo: false,
             demo_tick: 0,
             alert_cfg: cfg.alerts.clone(),
@@ -351,6 +364,8 @@ impl App {
             keys: self.keys.clone(),
             warnings: Vec::new(),
             alerts: self.alert_cfg.clone(),
+            notify: self.notify.clone(),
+            flap_window_secs: self.flap_window_secs,
             llm_servers: self.llm_servers.clone(),
         }
     }
@@ -368,6 +383,10 @@ impl App {
         }
         self.rebuild_proc_view();
         self.alerts = alerts::evaluate(&self.collector, &self.alert_cfg);
+        // Fire/resolve transitions drive notifications and the timeline; the
+        // alert *set* alone can't distinguish "still firing" from "just fired".
+        let transitions = self.tracker.update(&self.alerts, Instant::now());
+        self.notify.dispatch_all(&transitions);
         if self.show_conn {
             self.refresh_connections();
         }
@@ -773,7 +792,9 @@ impl App {
         // Esc peels back overlays in order, then clears a filter, then quits.
         // Deliberately not rebindable — it is the way out of every overlay.
         if key.code == KeyCode::Esc {
-            if self.show_ai {
+            if self.show_alert_history {
+                self.show_alert_history = false;
+            } else if self.show_ai {
                 self.show_ai = false;
             } else if self.show_detail {
                 self.show_detail = false;
@@ -827,6 +848,7 @@ impl App {
                 self.refresh_connections();
             }
             Some(Action::Ai) => self.show_ai = !self.show_ai,
+            Some(Action::AlertHistory) => self.show_alert_history = !self.show_alert_history,
             Some(Action::ThemeNext) => self.cycle_theme(true),
             Some(Action::ThemePrev) => self.cycle_theme(false),
             Some(Action::TickUp) => self.adjust_tick(true),

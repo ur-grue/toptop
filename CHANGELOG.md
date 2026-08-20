@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Alert actions** — `alert_cmd` (or `--alert-cmd`) runs a shell command on
+  every alert fire *and* resolve, with `TOPTOP_ALERT_STATE`,
+  `TOPTOP_ALERT_SEVERITY`, `TOPTOP_ALERT_KEY`, `TOPTOP_ALERT_DETAIL` and
+  `TOPTOP_ALERT_MSG` in its environment. Detached, output discarded, so a slow
+  hook can't stall a tick or corrupt the TUI. (#11)
+- **Built-in alert sinks** — `alert_webhook` (JSON), `alert_ntfy` and
+  `alert_slack` POST fire/resolve transitions without writing any curl
+  scripting. Payload construction is pure and unit-tested; delivery shells out
+  to `curl` because Slack and ntfy.sh are HTTPS-only and toptop carries no TLS
+  stack. Works in `--serve-metrics` mode too. (#39)
+- **Alert history timeline + flap suppression** — a new `AlertTracker` turns
+  each tick's alert set into debounced fire/resolve transitions: an alert that
+  re-fires within `alert_flap_secs` (default 60) of its last announcement is
+  tracked but not re-announced, and its matching resolve is suppressed with
+  it, so the timeline never shows a resolve without its fire. Press `A` for the
+  timeline, with relative ages and a suppressed-flap count. (#40)
+
 - **User-defined themes** — drop a `.conf` file into
   `$XDG_CONFIG_HOME/toptop/themes/` and its name joins the built-ins for
   `--theme`, `--list-themes` and the `p` cycle. `base = <built-in>` supplies

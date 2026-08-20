@@ -9,6 +9,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
+use std::time::Instant;
+
+use crate::alerts::{Level, TransitionState};
 use crate::app::{App, ProcColumn};
 use crate::metrics::ProcInfo;
 use crate::theme::Theme;
@@ -46,6 +49,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     if app.show_detail {
         render_detail(f, area, app);
+    }
+    if app.show_alert_history {
+        render_alert_history(f, area, app);
     }
     if let Some(idx) = app.signal_menu {
         render_signal_menu(f, area, theme, idx, app);
@@ -1615,6 +1621,82 @@ fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(table, inner);
 }
 
+/// Timeline of recent alert fire/resolve transitions, newest first.
+///
+/// The banner only ever shows what is firing *right now*; this is the "what
+/// happened while I wasn't looking" view, and it is where flap suppression
+/// becomes visible as a count rather than as silence.
+fn render_alert_history(f: &mut Frame, area: Rect, app: &App) {
+    let theme = app.theme();
+    let history = app.tracker.history();
+    let suppressed = app.tracker.suppressed();
+
+    let rect = centered(area, 78, (history.len().clamp(1, 16) + 4) as u16);
+    f.render_widget(Clear, rect);
+    let title = if suppressed > 0 {
+        format!(
+            "alert history · {} events · {suppressed} flap{} suppressed",
+            history.len(),
+            if suppressed == 1 { "" } else { "s" }
+        )
+    } else {
+        format!("alert history · {} events", history.len())
+    };
+    let block = panel(&title, theme);
+    let inner = block.inner(rect);
+    f.render_widget(block, rect);
+    if inner.height == 0 {
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    if history.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "No alerts have fired since toptop started.",
+            dim(theme),
+        )));
+    } else {
+        let now = Instant::now();
+        let rows = (inner.height as usize).saturating_sub(1);
+        for t in history.iter().rev().take(rows) {
+            let (marker, style) = match t.state {
+                TransitionState::Fired => (
+                    "▲ fired   ",
+                    Style::default().fg(match t.level {
+                        Level::Crit => theme.grad(1.0),
+                        Level::Warn => theme.grad(0.55),
+                    }),
+                ),
+                TransitionState::Resolved => {
+                    ("▼ resolved", Style::default().fg(theme.net_down.color()))
+                }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("{:>5}  ", compact_age(now, t.at)), dim(theme)),
+                Span::styled(marker, style),
+                Span::styled(
+                    format!("  {}", t.message),
+                    Style::default().fg(theme.fg.color()),
+                ),
+            ]));
+        }
+    }
+    lines.push(Line::from(Span::styled("Esc/A to close", dim(theme))));
+    f.render_widget(Paragraph::new(Text::from(lines)), inner);
+}
+
+/// Compact relative age, e.g. `12s`, `4m`, `2h`.
+fn compact_age(now: Instant, then: Instant) -> String {
+    let secs = now.saturating_duration_since(then).as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{}h", secs / 3600)
+    }
+}
+
 fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
     let rect = centered(area, 56, 26);
     f.render_widget(Clear, rect);
@@ -1642,6 +1724,7 @@ fn render_help(f: &mut Frame, area: Rect, theme: &Theme) {
         ("t", "toggle process tree"),
         ("e", "toggle per-core CPU meters"),
         ("a", "AI / local-LLM GPU view"),
+        ("A", "alert history timeline"),
         ("n", "network connections"),
         ("L", "cycle layout preset"),
         ("/", "filter processes"),
