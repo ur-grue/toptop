@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::json::{self, Json};
-use crate::theme::{Theme, THEMES};
+use crate::theme::{self, Theme};
 
 /// One inference server as reported by a host.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -250,14 +250,14 @@ impl FleetApp {
             monitor,
             hosts,
             selected: 0,
-            theme_idx: theme_idx.min(THEMES.len() - 1),
+            theme_idx: theme_idx.min(theme::themes().len() - 1),
             tick: Duration::from_millis(1000),
             should_quit: false,
         }
     }
 
     pub fn theme(&self) -> &'static Theme {
-        &THEMES[self.theme_idx]
+        &theme::themes()[self.theme_idx]
     }
 
     pub fn on_tick(&mut self) {
@@ -306,10 +306,11 @@ impl FleetApp {
             KeyCode::Home | KeyCode::Char('g') => self.selected = 0,
             KeyCode::End | KeyCode::Char('G') => self.selected = self.hosts.len().saturating_sub(1),
             KeyCode::Char('p') => {
-                self.theme_idx = (self.theme_idx + 1) % THEMES.len();
+                self.theme_idx = (self.theme_idx + 1) % theme::themes().len();
             }
             KeyCode::Char('P') => {
-                self.theme_idx = (self.theme_idx + THEMES.len() - 1) % THEMES.len();
+                self.theme_idx =
+                    (self.theme_idx + theme::themes().len() - 1) % theme::themes().len();
             }
             _ => {}
         }

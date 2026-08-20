@@ -33,7 +33,8 @@ USAGE:
 
 OPTIONS:
     -t, --tick <MS>      Refresh interval in milliseconds (100-60000)
-        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk, paper)
+        --theme <NAME>   Color theme (gruvbox, nord, dracula, tokyonight, matrix, cyberpunk,
+                         paper, or a user theme from ~/.config/toptop/themes/<name>.conf)
         --tree           Start in process-tree view
         --no-tree        Start in flat process view
         --ai             Open the AI / local-LLM GPU view on launch
@@ -237,11 +238,20 @@ fn arg_error(msg: &str) -> ! {
 fn main() -> Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
+    // User themes must be registered before the config file is read — it
+    // resolves `theme = <name>` against the registry.
+    for warning in theme::init_user_themes(theme::user_theme_dir().as_deref()) {
+        eprintln!("toptop: {warning}");
+    }
+
     let config_path = config_path_arg(&argv).unwrap_or_else(|e| arg_error(&e));
     let cfg = match &config_path {
         Some(path) => Config::load_path(path),
         None => Config::load(),
     };
+    for warning in &cfg.warnings {
+        eprintln!("toptop: {warning}");
+    }
     let opts = parse_args(&argv, cfg).unwrap_or_else(|e| arg_error(&e));
 
     match opts.action {
@@ -254,8 +264,13 @@ fn main() -> Result<()> {
             return Ok(());
         }
         Action::ListThemes => {
-            for t in theme::THEMES {
-                println!("{}", t.name);
+            let builtin = theme::BUILTINS.len();
+            for (i, t) in theme::themes().iter().enumerate() {
+                if i < builtin {
+                    println!("{}", t.name);
+                } else {
+                    println!("{}  (user)", t.name);
+                }
             }
             return Ok(());
         }
