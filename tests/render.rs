@@ -160,6 +160,8 @@ fn ai_view_renders() {
         }),
         gpu_offload_pct: None,
         addr: None,
+        preemptions: Some(12.0),
+        preempt_rate: Some(1.2),
     }];
     render_at(&mut app, 100, 30);
     render_at(&mut app, 60, 14); // cramped

@@ -146,6 +146,11 @@ impl Config {
                         cfg.alerts.kv_high_pct = v.clamp(1.0, 100.0);
                     }
                 }
+                "alert_preempt" => {
+                    if let Ok(v) = value.parse::<f64>() {
+                        cfg.alerts.preempt_rate_high = v.max(0.0);
+                    }
+                }
                 "alert_queue" => {
                     if let Ok(v) = value.parse::<f64>() {
                         cfg.alerts.queue_high = v.max(1.0);

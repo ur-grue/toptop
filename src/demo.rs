@@ -79,6 +79,14 @@ pub fn apply(c: &mut Collector, t: u64) {
         }),
         gpu_offload_pct: None,
         addr: None,
+        // Once KV saturates, the demo server starts preempting — that is the
+        // whole point of the story it tells.
+        preemptions: Some((t as f64 / 4.0).floor()),
+        preempt_rate: Some(if wave(t, 17.0, 38.0, 97.0, 0.4) > 92.0 {
+            wave(t, 5.0, 0.5, 3.5, 0.1)
+        } else {
+            0.0
+        }),
     }];
 }
 

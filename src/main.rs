@@ -55,6 +55,8 @@ OPTIONS:
         --alert-queue <N>    Queued requests considered a backlog (default 8)
         --alert-cmd <CMD>    Shell command run on every alert fire/resolve
                              (TOPTOP_ALERT_{STATE,SEVERITY,KEY,DETAIL,MSG} in its env)
+        --alert-preempt <R>  KV-cache preemptions/sec that trigger a critical alert
+                             (default 0.2 — preemption throws away completed work)
     -h, --help           Show this help and exit
     -V, --version        Show version and exit
 
@@ -212,6 +214,14 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                         .ok_or("--alert-cmd requires a shell command")?
                         .clone(),
                 );
+            }
+            "--alert-preempt" => {
+                let v = args
+                    .next()
+                    .ok_or("--alert-preempt requires a rate (preemptions/second)")?
+                    .parse::<f64>()
+                    .map_err(|_| "--alert-preempt value must be a number")?;
+                opts.cfg.alerts.preempt_rate_high = v.max(0.0);
             }
             "--alert-queue" => {
                 let v = args
