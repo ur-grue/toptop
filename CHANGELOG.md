@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The shipped Grafana dashboard covers the new signals** — panels for the
+  TTFT and TPOT percentile triads, KV-cache preemptions/sec (with a threshold
+  at the alerting default), the prefill-vs-decode split and GPU throttling. A
+  new test cross-checks every `toptop_*` name in the dashboard against the
+  exporter's own `# TYPE` declarations, so a renamed metric fails CI instead of
+  silently blanking a panel for everyone; it also asserts the panels don't
+  overlap on the 24-column grid. (#7)
+
 ### Added
 
 - **cgroup v2 awareness** — inside a container, the CPU panel now shows the
