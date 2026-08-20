@@ -28,6 +28,14 @@ fn main() {
     app.on_tick();
     app.on_tick();
     match overlay.as_str() {
+        // `--demo` is the first thing most visitors run; render what they see.
+        "demo" => {
+            app.demo = true;
+            app.show_ai = true;
+            for _ in 0..40 {
+                app.on_tick();
+            }
+        }
         "conn" => {
             app.show_conn = true;
             app.connections = app.collector.connections();

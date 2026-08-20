@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--demo`'s compute-vs-bandwidth trend plotted the host's GPU**, not the
+  simulated one: the history is sampled during the refresh, before the demo
+  overlay replaces the GPU. On a machine whose card reports nothing — every
+  machine the demo exists for — the trend was blank. The overlay now *replaces*
+  that tick's sample instead of adding one; appending would interleave the two
+  series and draw a comb.
+
 ### Changed
 
 - **The shipped Grafana dashboard covers the new signals** — panels for the

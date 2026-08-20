@@ -360,7 +360,7 @@ impl Collector {
         // Limits change when a container is resized, and the throttling
         // counters move every tick — both are a handful of small reads.
         self.cgroup = cgroup::current();
-        self.update_gpu_history();
+        self.update_gpu_history_with(false);
         self.servers = self.infer_monitor.snapshot();
         self.update_server_history();
         // Battery level moves on the order of minutes; poll it at most this
@@ -381,21 +381,32 @@ impl Collector {
     /// Keep one history per GPU, resizing when GPUs appear or disappear.
     /// A GPU that stops reporting utilization pushes 0 rather than nothing, so
     /// the time axis stays honest — a gap would silently compress the graph.
-    fn update_gpu_history(&mut self) {
+    /// Push this tick's per-GPU samples. `replace` overwrites the newest
+    /// sample instead of appending — for the demo overlay, which supersedes a
+    /// reading `refresh` already took this tick.
+    pub(crate) fn update_gpu_history_with(&mut self, replace: bool) {
         if self.gpu_history.len() != self.gpus.len() {
             self.gpu_history = (0..self.gpus.len())
                 .map(|_| GpuHistory::new(self.history_len))
                 .collect();
         }
         for (g, h) in self.gpus.iter().zip(self.gpu_history.iter_mut()) {
-            h.compute
-                .push(if g.has_util { g.util_pct as f64 } else { 0.0 });
-            h.bandwidth.push(if g.has_mem_util {
+            let compute = if g.has_util { g.util_pct as f64 } else { 0.0 };
+            let bandwidth = if g.has_mem_util {
                 g.mem_util as f64
             } else {
                 0.0
-            });
-            h.vram.push(g.mem_pct() as f64);
+            };
+            let vram = g.mem_pct() as f64;
+            if replace {
+                h.compute.replace_last(compute);
+                h.bandwidth.replace_last(bandwidth);
+                h.vram.replace_last(vram);
+            } else {
+                h.compute.push(compute);
+                h.bandwidth.push(bandwidth);
+                h.vram.push(vram);
+            }
         }
     }
 
@@ -1033,9 +1044,9 @@ mod tests {
     fn gpu_history_tracks_compute_bandwidth_and_vram() {
         let mut c = Collector::new(8);
         c.gpus = vec![fake_gpu(90.0, 30.0, 50, 100)];
-        c.update_gpu_history();
+        c.update_gpu_history_with(false);
         c.gpus = vec![fake_gpu(20.0, 95.0, 90, 100)];
-        c.update_gpu_history();
+        c.update_gpu_history_with(false);
 
         assert_eq!(c.gpu_history.len(), 1);
         let h = &c.gpu_history[0];
@@ -1050,15 +1061,15 @@ mod tests {
     fn gpu_history_resizes_when_gpus_come_and_go() {
         let mut c = Collector::new(8);
         c.gpus = vec![fake_gpu(50.0, 50.0, 1, 2), fake_gpu(50.0, 50.0, 1, 2)];
-        c.update_gpu_history();
+        c.update_gpu_history_with(false);
         assert_eq!(c.gpu_history.len(), 2);
         // A GPU disappearing (driver reload, container restart) resizes rather
         // than indexing past the end.
         c.gpus.pop();
-        c.update_gpu_history();
+        c.update_gpu_history_with(false);
         assert_eq!(c.gpu_history.len(), 1);
         c.gpus.clear();
-        c.update_gpu_history();
+        c.update_gpu_history_with(false);
         assert!(c.gpu_history.is_empty());
     }
 
@@ -1069,9 +1080,9 @@ mod tests {
         g.has_util = false;
         g.has_mem_util = false;
         c.gpus = vec![g];
-        c.update_gpu_history();
+        c.update_gpu_history_with(false);
         let before = c.gpu_history[0].compute.len();
-        c.update_gpu_history();
+        c.update_gpu_history_with(false);
         // Pushing 0 rather than nothing keeps the time axis honest — a gap
         // would silently compress the graph.
         assert_eq!(c.gpu_history[0].compute.len(), before + 1);

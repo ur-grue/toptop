@@ -32,6 +32,18 @@ impl History {
         self.data.push_back(value);
     }
 
+    /// Overwrite the newest sample, or append if the history is empty.
+    ///
+    /// For overlays that supersede a sample already taken this tick — the demo
+    /// mode replaces the real GPU's reading with its synthetic one. Appending
+    /// instead would interleave the two series and draw a comb.
+    pub fn replace_last(&mut self, value: f64) {
+        match self.data.back_mut() {
+            Some(last) => *last = value,
+            None => self.push(value),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -77,6 +89,16 @@ mod tests {
         assert_eq!(h.tail(3), vec![2.0, 3.0, 4.0]);
         assert_eq!(h.last(), 4.0);
         assert_eq!(h.max(), 4.0);
+    }
+
+    #[test]
+    fn replace_last_overwrites_rather_than_appending() {
+        let mut h = History::new(4);
+        h.replace_last(1.0); // empty: behaves as a push
+        assert_eq!(h.tail(4), vec![1.0]);
+        h.push(2.0);
+        h.replace_last(9.0);
+        assert_eq!(h.tail(4), vec![1.0, 9.0], "must not grow the series");
     }
 
     #[test]
