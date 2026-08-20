@@ -230,16 +230,22 @@ fn connections_collect_without_panic() {
 
 #[test]
 fn header_sort_mapping() {
-    use toptop::app::{header_sort_at, SortField};
-    assert_eq!(header_sort_at(0), Some(SortField::Pid));
-    assert_eq!(header_sort_at(10), Some(SortField::User));
-    assert_eq!(header_sort_at(20), Some(SortField::Cpu));
-    assert_eq!(header_sort_at(26), Some(SortField::Mem));
-    assert_eq!(header_sort_at(40), Some(SortField::Io));
-    assert_eq!(header_sort_at(50), Some(SortField::Gpu));
-    assert_eq!(header_sort_at(58), Some(SortField::Time));
-    assert_eq!(header_sort_at(63), None);
-    assert_eq!(header_sort_at(70), Some(SortField::Name));
+    use toptop::app::{header_sort_at, SortField, DEFAULT_COLUMNS as C};
+    assert_eq!(header_sort_at(C, 0), Some(SortField::Pid));
+    assert_eq!(header_sort_at(C, 10), Some(SortField::User));
+    assert_eq!(header_sort_at(C, 20), Some(SortField::Cpu));
+    assert_eq!(header_sort_at(C, 26), Some(SortField::Mem));
+    assert_eq!(header_sort_at(C, 40), Some(SortField::Io));
+    assert_eq!(header_sort_at(C, 50), Some(SortField::Gpu));
+    assert_eq!(header_sort_at(C, 58), Some(SortField::Time));
+    assert_eq!(header_sort_at(C, 63), None);
+    assert_eq!(header_sort_at(C, 70), Some(SortField::Name));
+
+    // A custom column set remaps the ranges: pid(7+1) then command takes the rest.
+    use toptop::app::ProcColumn;
+    let custom = &[ProcColumn::Pid, ProcColumn::Command];
+    assert_eq!(header_sort_at(custom, 0), Some(SortField::Pid));
+    assert_eq!(header_sort_at(custom, 9), Some(SortField::Name));
 }
 
 #[test]
@@ -276,7 +282,7 @@ fn interaction_flow_is_stable() {
     assert!(app.filter.is_empty());
 
     // Cycle through every theme and re-render.
-    for _ in 0..toptop::theme::THEMES.len() + 1 {
+    for _ in 0..toptop::theme::themes().len() + 1 {
         app.on_key(key(KeyCode::Char('p')));
         render_at(&mut app, 120, 40);
     }

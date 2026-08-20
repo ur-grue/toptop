@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **User-defined themes** — drop a `.conf` file into
+  `$XDG_CONFIG_HOME/toptop/themes/` and its name joins the built-ins for
+  `--theme`, `--list-themes` and the `p` cycle. `base = <built-in>` supplies
+  every key the file doesn't set, colors are `#rrggbb`, and a broken file
+  warns on stderr and is skipped rather than being fatal. (#17)
+- **Configurable keybindings** — `bind_<action> = <key>[, <key>...]` in the
+  config file remaps any main-view action (`bind_quit = ctrl+x`). Key names
+  cover characters, arrows, `pgup`/`pgdn`, `home`/`end`, `enter`, `space`,
+  `delete`, `f1`–`f12` and `ctrl+`/`alt+` prefixes; unknown keys warn and keep
+  the default, and binding an already-used key moves it. `Esc` and `Ctrl-C`
+  stay fixed. (#42)
+- **Process-table column customization** — the `columns` config key chooses
+  which columns are shown and in which order (`columns = pid, cpu, vram,
+  command`). The header, the row cells and the click-to-sort mapping are all
+  driven by the configured set. (#43)
+
 - **More inference runtimes detected** — TensorRT-LLM (`trtllm-serve`,
   Prometheus metrics incl. KV-cache utilization, queue and TTFT, plus
   tokens/sec from its counters), the `mlc-llm` launcher spelling (base MLC

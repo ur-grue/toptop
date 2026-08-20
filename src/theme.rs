@@ -5,6 +5,10 @@
 //! on load (typically green → yellow → red). Colors are emitted as true RGB so
 //! the gradients are smooth on any 24-bit-capable terminal.
 
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
 use ratatui::style::Color;
 
 /// An RGB triple used for interpolation before being handed to ratatui.
@@ -136,8 +140,9 @@ static GRAD_PAPER: [Rgb; 4] = [
     rgb(183, 28, 28), // red 900
 ];
 
-/// All themes, in cycle order.
-pub static THEMES: &[Theme] = &[
+/// The compile-time themes, in cycle order. User themes loaded from
+/// `themes/*.conf` are appended to these by [`init_user_themes`].
+pub static BUILTINS: &[Theme] = &[
     Theme {
         name: "gruvbox",
         fg: rgb(235, 219, 178),
@@ -267,11 +272,160 @@ pub static THEMES: &[Theme] = &[
     },
 ];
 
+// ── Theme registry (built-ins + user themes) ─────────────────────────────────
+
+/// The active theme list: built-ins first, then any user themes loaded from
+/// disk. Populated once by [`init_user_themes`]; falls back to the built-ins
+/// when nothing was loaded (tests, `--export`, library use).
+static REGISTRY: OnceLock<Vec<Theme>> = OnceLock::new();
+
+/// All themes available at runtime, in cycle order.
+pub fn themes() -> &'static [Theme] {
+    REGISTRY.get_or_init(|| BUILTINS.to_vec())
+}
+
 /// Look up a theme index by name (case-insensitive). Returns `None` if unknown.
 pub fn index_by_name(name: &str) -> Option<usize> {
-    THEMES
+    themes()
         .iter()
         .position(|t| t.name.eq_ignore_ascii_case(name))
+}
+
+/// The user theme directory, honoring `XDG_CONFIG_HOME`.
+pub fn user_theme_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    Some(base.join("toptop").join("themes"))
+}
+
+/// Load `*.conf` theme files from `dir` and append them to the registry.
+///
+/// Call once, before the config file is read (it resolves `theme = <name>`).
+/// Returns one warning line per file that could not be parsed; a broken file is
+/// skipped, never fatal. Later calls are no-ops.
+pub fn init_user_themes(dir: Option<&Path>) -> Vec<String> {
+    let mut list = BUILTINS.to_vec();
+    let mut warnings = Vec::new();
+    if let Some(dir) = dir {
+        let mut files: Vec<PathBuf> = fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "conf"))
+            .collect();
+        // Directory order is unspecified; sort so the cycle order is stable.
+        files.sort();
+        for path in files {
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let Ok(contents) = fs::read_to_string(&path) else {
+                warnings.push(format!("theme {}: unreadable, ignored", path.display()));
+                continue;
+            };
+            match parse_theme(stem, &contents) {
+                Ok(theme) => {
+                    // A user theme may not shadow a built-in name, or `--theme`
+                    // would become ambiguous.
+                    if list.iter().any(|t| t.name.eq_ignore_ascii_case(theme.name)) {
+                        warnings.push(format!("theme '{stem}': name already taken, ignored"));
+                    } else {
+                        list.push(theme);
+                    }
+                }
+                Err(e) => warnings.push(format!("theme '{stem}': {e}, ignored")),
+            }
+        }
+    }
+    let _ = REGISTRY.set(list);
+    warnings
+}
+
+/// Build a theme from `key = #rrggbb` lines.
+///
+/// `base = <built-in>` picks the theme every unset key falls back to (default
+/// `gruvbox`), so a file only has to state what it changes. `gradient` takes a
+/// comma-separated list of stops.
+pub fn parse_theme(name: &str, contents: &str) -> Result<Theme, String> {
+    let mut base_name = "gruvbox".to_string();
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let (key, value) = (key.trim().to_ascii_lowercase(), value.trim().to_string());
+        if key == "base" {
+            base_name = value;
+        } else {
+            pairs.push((key, value));
+        }
+    }
+
+    let base = BUILTINS
+        .iter()
+        .find(|t| t.name.eq_ignore_ascii_case(&base_name))
+        .ok_or_else(|| format!("unknown base theme '{base_name}'"))?;
+
+    let mut theme = base.clone();
+    theme.name = Box::leak(name.to_ascii_lowercase().into_boxed_str());
+
+    for (key, value) in pairs {
+        match key.as_str() {
+            "gradient" => {
+                let stops = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(parse_hex)
+                    .collect::<Result<Vec<Rgb>, String>>()?;
+                if stops.is_empty() {
+                    return Err("gradient needs at least one color".to_string());
+                }
+                theme.gradient = Box::leak(stops.into_boxed_slice());
+            }
+            // `bg = none` keeps the terminal's own background.
+            "bg" if value.eq_ignore_ascii_case("none") => theme.bg = None,
+            "bg" => theme.bg = Some(parse_hex(&value)?),
+            _ => {
+                let slot = match key.as_str() {
+                    "fg" => &mut theme.fg,
+                    "dim" => &mut theme.dim,
+                    "accent" => &mut theme.accent,
+                    "accent2" => &mut theme.accent2,
+                    "border" => &mut theme.border,
+                    "border_focus" => &mut theme.border_focus,
+                    "mem" => &mut theme.mem,
+                    "swap" => &mut theme.swap,
+                    "net_down" => &mut theme.net_down,
+                    "net_up" => &mut theme.net_up,
+                    "disk_read" => &mut theme.disk_read,
+                    "disk_write" => &mut theme.disk_write,
+                    "selection" => &mut theme.selection,
+                    // Unknown keys keep the base value rather than failing the
+                    // whole file — forward compatible with newer key sets.
+                    _ => continue,
+                };
+                *slot = parse_hex(&value)?;
+            }
+        }
+    }
+    Ok(theme)
+}
+
+/// Parse `#rrggbb` (the leading `#` optional) into an [`Rgb`].
+fn parse_hex(value: &str) -> Result<Rgb, String> {
+    let hex = value.strip_prefix('#').unwrap_or(value);
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("'{value}' is not a #rrggbb color"));
+    }
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+    Ok(Rgb(byte(0), byte(2), byte(4)))
 }
 
 #[cfg(test)]
@@ -289,7 +443,7 @@ mod tests {
 
     #[test]
     fn gradient_bounds() {
-        let theme = &THEMES[0];
+        let theme = &themes()[0];
         assert_eq!(theme.grad_rgb(0.0), theme.gradient[0]);
         assert_eq!(
             theme.grad_rgb(1.0),
@@ -301,11 +455,62 @@ mod tests {
     }
 
     #[test]
+    fn hex_parsing() {
+        assert_eq!(parse_hex("#ff8000"), Ok(Rgb(255, 128, 0)));
+        assert_eq!(parse_hex("FF8000"), Ok(Rgb(255, 128, 0)));
+        assert!(parse_hex("#fff").is_err());
+        assert!(parse_hex("#gggggg").is_err());
+        assert!(parse_hex("").is_err());
+    }
+
+    #[test]
+    fn user_theme_overrides_base_and_keeps_the_rest() {
+        let t = parse_theme(
+            "Midnight",
+            "# my theme\nbase = nord\naccent = #ff0000\nbg = none\nunknown_key = #123456\n",
+        )
+        .expect("valid theme");
+        assert_eq!(t.name, "midnight");
+        assert_eq!(t.accent, Rgb(255, 0, 0));
+        assert_eq!(t.bg, None);
+        // Untouched keys keep the base theme's values.
+        let nord = BUILTINS.iter().find(|b| b.name == "nord").unwrap();
+        assert_eq!(t.fg, nord.fg);
+        assert_eq!(t.gradient, nord.gradient);
+    }
+
+    #[test]
+    fn user_theme_gradient_and_failures() {
+        let t = parse_theme("g", "gradient = #000000, #ffffff\n").unwrap();
+        assert_eq!(t.gradient, &[Rgb(0, 0, 0), Rgb(255, 255, 255)]);
+
+        assert!(parse_theme("b", "base = nope\n").is_err());
+        assert!(parse_theme("b", "accent = purple\n").is_err());
+        assert!(parse_theme("b", "gradient =\n").is_err());
+    }
+
+    #[test]
+    fn broken_theme_files_are_skipped_with_a_warning() {
+        let dir = std::env::temp_dir().join(format!("toptop-themes-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("broken.conf"), "accent = not-a-color\n").unwrap();
+        fs::write(dir.join("gruvbox.conf"), "accent = #ffffff\n").unwrap();
+        fs::write(dir.join("notes.txt"), "ignored\n").unwrap();
+        let warnings = init_user_themes(Some(&dir));
+        fs::remove_dir_all(&dir).ok();
+
+        assert!(warnings.iter().any(|w| w.contains("broken")));
+        assert!(warnings.iter().any(|w| w.contains("name already taken")));
+        // A built-in must not be replaced by a same-named user file.
+        assert_eq!(index_by_name("gruvbox"), Some(0));
+    }
+
+    #[test]
     fn all_themes_resolve() {
-        for t in THEMES {
+        for t in themes() {
             assert_eq!(
                 index_by_name(t.name),
-                Some(THEMES.iter().position(|x| x.name == t.name).unwrap())
+                Some(themes().iter().position(|x| x.name == t.name).unwrap())
             );
         }
         assert_eq!(index_by_name("nope"), None);
