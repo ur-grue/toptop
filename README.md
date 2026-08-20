@@ -371,7 +371,7 @@ OPTIONS:
 | `Enter` | process detail view | `n` | network connections |
 | `s` | cycle sort column | `L` | cycle layout preset |
 | `i` | invert sort order | `p` / `P` | next / previous theme |
-| `A` | alert history timeline | | |
+| `A` | alert history timeline | `C` | group by container / pod |
 | `Enter` | process detail (open files · sockets · env) | | |
 | click header | sort by column | `+` / `-` | faster / slower refresh |
 | `/` | filter processes | `space` | pause / resume |
@@ -434,6 +434,39 @@ source completions/toptop.bash                    # bash (or copy to /etc/bash_c
 cp completions/_toptop ~/.zfunc/                  # zsh  (ensure ~/.zfunc is on your $fpath)
 cp completions/toptop.fish ~/.config/fish/completions/   # fish
 ```
+
+### Containers: the numbers htop gets wrong
+
+Inside a container, every terminal monitor reports the **host's** CPU count and
+memory. A pod limited to 2 cores on a 64-core node shows "3% CPU" while it is
+pinned and being throttled — the number is arithmetically correct and
+completely useless.
+
+toptop reads cgroup v2 and shows what the container is actually allowed:
+
+```
+all  47.2%  3.20 GHz  32c/64t  ⧉ limit 2.00 cores  ⏱ throttled
+ram  12.4%  7.9 GiB / 64 GiB
+⧉    71.3%  5.7 GiB / 8.0 GiB cgroup
+```
+
+`⏱ throttled` appears when the kernel has actually parked the cgroup off-CPU —
+the smoking gun for "my container is slow and the host looks idle". Outside a
+container nothing changes: no cgroup, no extra lines.
+
+Press **`C`** to group the process table by container or Kubernetes pod:
+
+```
+PID     CPU%  CONTAINER       COMMAND
+  4242  94.1  pod/7d4f1e2a_3b python -m vllm.entrypoints.openai.api_server
+  4243  12.0  pod/7d4f1e2a_3b ray::IDLE
+  8801   3.2  3f7a9c1b2e4d    postgres
+   901   0.5  ·               sshd
+```
+
+Docker, containerd/CRI and systemd-managed Kubernetes slices are all
+recognized. Resolution is off until you press `C` — it is a `/proc` read per
+process — and cached per PID afterwards, since a process cannot change cgroup.
 
 ### The diagnosis: *why* is it slow?
 
