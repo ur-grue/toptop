@@ -11,6 +11,7 @@ pub mod history;
 pub mod json;
 pub mod keys;
 pub mod metrics;
+pub mod notify;
 pub mod serve;
 pub mod theme;
 pub mod ui;

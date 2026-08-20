@@ -9,8 +9,9 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use crate::alerts::{self, AlertTracker};
 use crate::config::Config;
 use crate::export;
 use crate::metrics::Collector;
@@ -26,6 +27,8 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
     let shared = Arc::new(Mutex::new(String::from("# toptop: warming up\n")));
     let interval = Duration::from_millis(cfg.tick_ms.max(1000));
     let alert_cfg = cfg.alerts.clone();
+    let notifier = cfg.notify.clone();
+    let flap = Duration::from_secs(cfg.flap_window_secs);
 
     // Background sampler: owns the Collector, republishes rendered metrics.
     {
@@ -34,8 +37,15 @@ pub fn run(addr: &str, cfg: &Config) -> std::io::Result<()> {
             .name("toptop-exporter".into())
             .spawn(move || {
                 let mut c = Collector::new(256);
+                let mut tracker = AlertTracker::new(flap);
                 loop {
                     c.refresh();
+                    // Unattended mode is exactly where notifications matter, so
+                    // the exporter runs the same transition detection as the TUI.
+                    if !notifier.is_empty() {
+                        let alerts = alerts::evaluate(&c, &alert_cfg);
+                        notifier.dispatch_all(&tracker.update(&alerts, Instant::now()));
+                    }
                     let text = export::to_prometheus(&c, &alert_cfg);
                     if let Ok(mut s) = shared.lock() {
                         *s = text;

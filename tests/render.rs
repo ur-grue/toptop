@@ -271,6 +271,27 @@ fn interaction_flow_is_stable() {
         render_at(&mut app, 120, 40);
     }
 
+    // Alert-history overlay: empty, then with transitions in it.
+    app.on_key(key(KeyCode::Char('A')));
+    assert!(app.show_alert_history);
+    render_at(&mut app, 120, 40);
+    {
+        use std::time::Instant;
+        use toptop::alerts::{Alert, Level};
+        let a = vec![Alert {
+            level: Level::Crit,
+            key: "gpu_throttle",
+            detail: "gpu0".into(),
+            message: "gpu0 is throttling (TestGPU)".into(),
+        }];
+        let now = Instant::now();
+        app.tracker.update(&a, now);
+        app.tracker.update(&[], now);
+    }
+    render_at(&mut app, 120, 40);
+    app.on_key(key(KeyCode::Esc));
+    assert!(!app.show_alert_history, "Esc peels the overlay back");
+
     // Filter entry typing path.
     app.on_key(key(KeyCode::Char('/')));
     for c in "kernel".chars() {
