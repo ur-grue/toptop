@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-129%20green-success)
+![Tests](https://img.shields.io/badge/tests-137%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -337,6 +337,8 @@ OPTIONS:
         --alert-vram <PCT>   VRAM % that triggers the spill‑risk alert (default 90)
         --alert-kv <PCT>     KV‑cache % considered saturated (default 95)
         --alert-queue <N>    Queued requests considered a backlog (default 8)
+        --alert-cmd <CMD>    Shell command run on every alert fire/resolve
+                             (TOPTOP_ALERT_{STATE,SEVERITY,KEY,DETAIL,MSG} in its env)
     -h, --help           Show help
     -V, --version        Show version
 ```
@@ -351,6 +353,7 @@ OPTIONS:
 | `Enter` | process detail view | `n` | network connections |
 | `s` | cycle sort column | `L` | cycle layout preset |
 | `i` | invert sort order | `p` / `P` | next / previous theme |
+| `A` | alert history timeline | | |
 | click header | sort by column | `+` / `-` | faster / slower refresh |
 | `/` | filter processes | `space` | pause / resume |
 | `K` / `F9` | signal menu | `?` / `F1` | help overlay |
@@ -427,6 +430,46 @@ alert_vram_pct = 85   # VRAM % that triggers the spill-risk alert (default 90)
 alert_kv_pct = 90     # KV-cache % considered saturated (default 95)
 alert_queue = 4       # queued requests considered a backlog (default 8)
 ```
+
+### Alert actions and sinks
+
+Alerts render in the TUI and export as Prometheus gauges. On an unattended box
+you want toptop to *do* something when one fires — and again when it clears:
+
+```ini
+alert_cmd = notify-send "$TOPTOP_ALERT_MSG"      # any shell command
+alert_webhook = http://localhost:9000/hook       # generic JSON POST
+alert_ntfy = https://ntfy.sh/my-gpu-box          # ntfy topic
+alert_slack = https://hooks.slack.com/services/… # Slack incoming webhook
+alert_flap_secs = 60                             # flap-suppression window
+```
+
+`alert_cmd` (also `--alert-cmd <CMD>`) runs on every fire **and** resolve with
+the alert in its environment: `TOPTOP_ALERT_STATE` (`fired`/`resolved`),
+`TOPTOP_ALERT_SEVERITY` (`warn`/`crit`), `TOPTOP_ALERT_KEY`,
+`TOPTOP_ALERT_DETAIL`, `TOPTOP_ALERT_MSG`. Its output goes to `/dev/null` — the
+TUI owns the terminal — and it runs detached, so a slow hook never stalls a
+refresh.
+
+The three built-in sinks POST for you. Delivery is fire-and-forget on a
+background thread, and works the same in `--serve-metrics` mode, which is where
+unattended alerting actually matters.
+
+> **Note:** the sinks shell out to `curl`, because Slack and ntfy.sh are
+> HTTPS-only and toptop carries no TLS stack. The binary stays dependency-free;
+> `curl` is only needed if you configure a sink.
+
+**Flap suppression:** an alert that re-fires within `alert_flap_secs` (default
+60) of its last announcement is tracked but not re-announced — and its matching
+resolve is suppressed too, so you never get a "resolved" with no "fired". A
+throttling GPU crossing its threshold every two seconds costs you one
+notification, not thirty.
+
+### Alert history
+
+Press `A` for a timeline of recent fire/resolve transitions with relative ages
+and a count of how many flaps were suppressed. The banner tells you what is
+wrong *now*; this tells you what happened while you were away.
 
 ### Process-table columns
 
