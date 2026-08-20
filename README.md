@@ -342,8 +342,8 @@ release](https://github.com/ur-grue/toptop/releases/latest):
 | Windows x86_64 | `toptop-<version>-x86_64-windows.zip` |
 
 ```bash
-curl -L https://github.com/ur-grue/toptop/releases/latest/download/toptop-1.0.1-x86_64-linux.tar.gz | tar xz
-sudo install -m755 toptop-1.0.1-x86_64-linux/toptop /usr/local/bin/
+curl -L https://github.com/ur-grue/toptop/releases/latest/download/toptop-1.0.2-x86_64-linux.tar.gz | tar xz
+sudo install -m755 toptop-1.0.2-x86_64-linux/toptop /usr/local/bin/
 ```
 
 **Windows** — download the `.zip` from the [latest
@@ -354,8 +354,8 @@ which the themes rely on).
 **Debian / Ubuntu**:
 
 ```bash
-curl -LO https://github.com/ur-grue/toptop/releases/latest/download/toptop_1.0.1-1_amd64.deb
-sudo apt install ./toptop_1.0.1-1_amd64.deb   # binary, man page, completions
+curl -LO https://github.com/ur-grue/toptop/releases/latest/download/toptop_1.0.2-1_amd64.deb
+sudo apt install ./toptop_1.0.2-1_amd64.deb   # binary, man page, completions
 ```
 
 **Homebrew** — this repo is its own tap:

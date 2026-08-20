@@ -37,6 +37,8 @@ jobs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+
       - id: tag
         env:
           RAW: ${{ inputs.tag || github.ref_name }}
@@ -44,6 +46,23 @@ jobs:
           TAG="${RAW#release/}"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: The tag must agree with Cargo.toml
+        env:
+          TAG_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          # A tag alone does not bump anything: the binary reports
+          # CARGO_PKG_VERSION and cargo-deb names the package from Cargo.toml.
+          # Tagging v1.0.2 against a 1.0.1 manifest publishes tarballs called
+          # 1.0.2 containing a binary that says 1.0.1 — which is exactly what
+          # happened once, and why this check exists.
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::tag v${TAG_VERSION} does not match Cargo.toml version ${CARGO_VERSION}." >&2
+            echo "Bump 'version' in Cargo.toml to ${TAG_VERSION}, commit, and tag that commit." >&2
+            exit 1
+          fi
+          echo "tag v${TAG_VERSION} matches Cargo.toml ✓"
 
   build:
     name: ${{ matrix.name }}
