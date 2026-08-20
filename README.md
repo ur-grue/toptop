@@ -14,7 +14,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
-![Tests](https://img.shields.io/badge/tests-191%20green-success)
+![Tests](https://img.shields.io/badge/tests-197%20green-success)
 
 [AI view](#-for-ai-engineers) · [Fleet](#-multi-host-fleet-view) · [Prometheus](#-export--observability) · [Install](#-install) · [Features](#-features) · [Themes](#-themes)
 
@@ -566,6 +566,25 @@ has no GPU at all. A recording killed mid-write ends in a partial line, which
 is skipped and counted rather than losing the file. Recordings keep 100 process
 rows per frame, not the export's top 20 — a flight recorder that dropped a
 process the moment it stopped being the busiest would lose the culprit.
+
+### OpenTelemetry export
+
+`--serve-metrics` is a *pull* endpoint — Prometheus scrapes toptop. Teams with
+an OTel pipeline want the opposite:
+
+```bash
+toptop --otlp http://localhost:4318
+```
+
+toptop then **pushes** OTLP/HTTP JSON to the collector every tick, with
+`system.*`, `gpu.*` and `inference.*` gauges carrying the runtime, model and
+GPU as resource attributes. A collector that is down is reported once and then
+counted rather than spamming your terminal, and recovery is reported too.
+
+> **Plain `http://` only.** OTLP collectors are near-universally reached over
+> http — a sidecar, a localhost agent, an in-cluster service — and toptop
+> carries no TLS stack. An `https://` endpoint is refused *at startup* with an
+> explanation, rather than failing obscurely once a second.
 
 ## 📦 Config
 

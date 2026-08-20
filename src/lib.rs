@@ -13,6 +13,7 @@ pub mod json;
 pub mod keys;
 pub mod metrics;
 pub mod notify;
+pub mod otlp;
 pub mod record;
 pub mod serve;
 pub mod theme;
