@@ -60,6 +60,20 @@ pub fn parse_ipv6_hex(s: &str) -> Option<(String, u16)> {
     Some((ip.to_string(), port))
 }
 
+/// Explanation shown when the connections view is empty, tailored to the build
+/// target — enumeration parses `/proc/net/*`, so it only works on Linux.
+/// Exactly one arm compiles per platform.
+pub fn no_connections_reason() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "No open connections."
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        "Connection enumeration parses /proc/net/* and is Linux-only."
+    }
+}
+
 /// Map a TCP state hex code (`/proc/net/tcp` column `st`) to its name.
 pub fn tcp_state(hex: &str) -> &'static str {
     match hex {

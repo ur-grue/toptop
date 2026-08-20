@@ -12,7 +12,7 @@ with a gorgeous full system monitor underneath. Rust · one tiny binary · zero 
 [![CI](https://github.com/ur-grue/toptop/actions/workflows/ci.yml/badge.svg)](https://github.com/ur-grue/toptop/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.82%2B-orange?logo=rust)](https://www.rust-lang.org)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS-informational)
+![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-informational)
 ![Dependencies](https://img.shields.io/badge/runtime%20deps-0-success)
 ![Tests](https://img.shields.io/badge/tests-166%20green-success)
 
@@ -317,6 +317,16 @@ parts — GPU metrics (`nvidia-smi`/`sysfs`), battery, and the `/proc`‑based c
 inspector — degrade gracefully to empty panels there (Apple‑GPU support is tracked in
 [#4](https://github.com/ur-grue/toptop/issues/4)). On light terminal backgrounds, use
 `--theme paper`.
+
+**Windows** is **best-effort**: it builds and its tests run in CI on
+`windows-latest`, and the process table, CPU/memory/network/disk rates, themes,
+layouts and the NVIDIA GPU panel (via `nvidia-smi.exe`) work. What does not:
+the connections inspector and inference-server discovery both parse `/proc` and
+show a one-line explanation instead of an empty panel; renicing reports
+"unsupported" (Windows uses priority classes, not nice values); and the signal
+menu offers only *Terminate*, since Windows has no signals. Native equivalents
+are open for contribution —
+[#45](https://github.com/ur-grue/toptop/issues/45).
 
 ## 🎛️ Usage
 

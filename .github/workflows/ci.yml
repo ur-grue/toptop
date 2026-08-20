@@ -41,3 +41,32 @@ jobs:
 
       - name: Release build
         run: cargo build --release
+
+  windows:
+    # Windows support is best-effort: the process table, CPU/memory/network
+    # rates and the NVIDIA GPU panel work, while the /proc-based bits
+    # (connections, inference-server discovery) and renicing degrade to empty
+    # or "unsupported". This job is what keeps that from silently rotting.
+    name: windows · build + test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Tests
+        run: cargo test --all-features
+
+      - name: Release build
+        run: cargo build --release

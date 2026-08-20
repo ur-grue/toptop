@@ -1180,10 +1180,14 @@ fn render_signal_menu(f: &mut Frame, area: Rect, theme: &Theme, idx: usize, app:
             Style::default().fg(theme.fg.color())
         };
         let marker = if selected { "▶ " } else { "  " };
-        lines.push(Line::from(Span::styled(
-            format!("{}{:<10} {:>2}", marker, name, num),
-            style,
-        )));
+        // `num` is 0 on platforms without signal numbers (Windows) — showing
+        // it would just be noise.
+        let label = if *num > 0 {
+            format!("{}{:<10} {:>2}", marker, name, num)
+        } else {
+            format!("{}{}", marker, name)
+        };
+        lines.push(Line::from(Span::styled(label, style)));
     }
     lines.push(Line::from(Span::styled(
         "↑/↓ select · Enter send · Esc cancel",
@@ -1807,6 +1811,18 @@ fn render_connections(f: &mut Frame, area: Rect, app: &mut App) {
     app.conn_rows = rows_cap;
     let max_offset = app.connections.len().saturating_sub(rows_cap);
     app.conn_offset = app.conn_offset.min(max_offset);
+
+    // An empty table looks like a bug on platforms that can't enumerate at all.
+    if app.connections.is_empty() {
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                crate::metrics::netconn::no_connections_reason(),
+                dim(theme),
+            ))),
+            inner,
+        );
+        return;
+    }
 
     let header = Row::new(vec![
         Cell::from("PROTO"),

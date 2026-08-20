@@ -43,9 +43,14 @@ assets = [
 ratatui = "0.30"
 crossterm = "0.29"
 sysinfo = "0.38"
-libc = "0.2"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+# Signal delivery and renicing go through the raw syscalls, so the exact errno
+# can separate "not permitted" from "already gone". Windows uses the sysinfo
+# process API instead — see src/metrics/mod.rs.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
