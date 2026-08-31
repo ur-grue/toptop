@@ -68,10 +68,8 @@ const RUNTIMES: &[(&str, &str, AiKind)] = &[
 
 /// Return the runtime if `name`/`cmd` look like a local-AI workload.
 pub fn detect_runtime(name: &str, cmd: &str) -> Option<Runtime> {
-    let name = name.to_ascii_lowercase();
-    let cmd = cmd.to_ascii_lowercase();
     for (needle, label, kind) in RUNTIMES {
-        if token_match(&name, needle) || token_match(&cmd, needle) {
+        if token_match(name, needle) || token_match(cmd, needle) {
             return Some(Runtime { label, kind: *kind });
         }
     }
@@ -83,23 +81,32 @@ pub fn inference_runtime(name: &str, cmd: &str) -> Option<&'static str> {
     detect_runtime(name, cmd).map(|r| r.label)
 }
 
-/// Match `needle` in `hay` only at a token boundary (non-alphanumeric on each
-/// side), so `vllm` matches `python -m vllm.entrypoints` but not `svllmx`.
+/// Case-insensitive token-boundary match: `needle` (must be lowercase ASCII)
+/// matches in `hay` only when bordered by non-alphanumeric characters.
+/// Zero allocations — compares byte-by-byte with inline lowercasing.
 fn token_match(hay: &str, needle: &str) -> bool {
-    let bytes = hay.as_bytes();
-    let nlen = needle.len();
-    let mut start = 0;
-    while let Some(pos) = hay[start..].find(needle) {
-        let i = start + pos;
-        let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
-        let after = i + nlen;
-        let after_ok = after >= bytes.len() || !bytes[after].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
+    let h = hay.as_bytes();
+    let n = needle.as_bytes();
+    let nlen = n.len();
+    if nlen == 0 || nlen > h.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i + nlen <= h.len() {
+        if eq_ignore_ascii_case_slice(&h[i..i + nlen], n) {
+            let before_ok = i == 0 || !h[i - 1].is_ascii_alphanumeric();
+            let after_ok = i + nlen >= h.len() || !h[i + nlen].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                return true;
+            }
         }
-        start = i + nlen;
+        i += 1;
     }
     false
+}
+
+fn eq_ignore_ascii_case_slice(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.to_ascii_lowercase() == *y)
 }
 
 #[cfg(test)]

@@ -221,18 +221,19 @@ Inference servers (auto-discovered)
     83.4 tok/s (0.29 tok/s/W)  prefill 1240/s  kv 64%  req 2/5  ttft 180ms
 ```
 
-## 🥊 How it compares
+## 🥊 nvidia-smi alternative — how it compares
 
-| | **toptop** | htop | btop | nvtop / nvitop |
-|---|:---:|:---:|:---:|:---:|
-| Full system monitor (CPU/mem/net/disk/procs) | ✅ | ✅ | ✅ | ✖️ (GPU-focused) |
-| GPU utilization + VRAM | ✅ | ✖️ | ✅ | ✅ |
-| Compute **vs. memory-bandwidth** side by side | ✅ | ✖️ | ✖️ | partial |
-| Inference-server auto-discovery (tokens/sec, KV, TTFT) | ✅ | ✖️ | ✖️ | ✖️ |
-| VRAM-spill / throttle / queue **alerts** | ✅ | ✖️ | ✖️ | ✖️ |
-| Prometheus exporter built in | ✅ | ✖️ | ✖️ | ✖️ |
-| Multi-host fleet view over SSH | ✅ | ✖️ | ✖️ | ✖️ |
-| Zero runtime dependencies | ✅ | ✅ | ✅ | ✖️ (needs NVML) |
+| | **toptop** | nvidia-smi | htop | btop | nvtop / nvitop | asitop |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Full system monitor (CPU/mem/net/disk/procs) | ✅ | ✖️ | ✅ | ✅ | ✖️ (GPU-focused) | ✖️ (GPU-focused) |
+| GPU utilization + VRAM | ✅ | ✅ | ✖️ | ✅ | ✅ | ✅ (Apple GPU) |
+| Compute **vs. memory-bandwidth** side by side | ✅ | ✖️ | ✖️ | ✖️ | partial | partial |
+| Inference-server auto-discovery (tokens/sec, KV, TTFT) | ✅ | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ |
+| VRAM-spill / throttle / queue **alerts** | ✅ | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ |
+| Names the bottleneck (diagnosis, not just numbers) | ✅ | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ |
+| Prometheus exporter built in | ✅ | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ |
+| Multi-host fleet view over SSH | ✅ | ✖️ | ✖️ | ✖️ | ✖️ | ✖️ |
+| Zero runtime dependencies | ✅ | ships with driver | ✅ | ✅ | ✖️ (needs NVML) | ✖️ (Python) |
 
 All of those are excellent tools — toptop's lane is the **local-inference observability** column.
 
@@ -379,6 +380,20 @@ Then, on any machine:
 toptop           # the full system monitor
 toptop --demo    # the AI view with a simulated GPU — no GPU needed
 ```
+
+### Quickstart for ML engineers
+
+Three commands to see everything toptop does for inference monitoring:
+
+```bash
+toptop --demo                  # 1. simulated AI view — no GPU needed
+toptop -a                      # 2. real AI view (auto-discovers your local servers)
+toptop --serve-metrics         # 3. Prometheus endpoint for Grafana dashboards
+```
+
+The AI view (`a`) auto-discovers vLLM, Ollama, llama.cpp, TGI, SGLang, TensorRT-LLM,
+and LM Studio — no config needed. It shows live tokens/sec, KV-cache pressure, TTFT/TPOT
+percentiles, and names the bottleneck (bandwidth-bound, KV thrashing, spill, throttle).
 
 ### Platform support
 

@@ -235,6 +235,23 @@ fn io_rate(p: &ProcInfo) -> f64 {
     p.io_read_rate + p.io_write_rate
 }
 
+fn cmp_ignore_ascii_case(a: &str, b: &str) -> std::cmp::Ordering {
+    a.bytes()
+        .map(|b| b.to_ascii_lowercase())
+        .cmp(b.bytes().map(|b| b.to_ascii_lowercase()))
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
+    let n = needle.len();
+    if n == 0 {
+        return true;
+    }
+    haystack
+        .as_bytes()
+        .windows(n)
+        .any(|w| w.iter().zip(needle.as_bytes()).all(|(h, n)| h.to_ascii_lowercase() == *n))
+}
+
 /// Top-section layout presets, cycled with `L` and persisted to config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutPreset {
@@ -625,9 +642,9 @@ impl App {
         if !self.filter.is_empty() {
             let needle = self.filter.to_ascii_lowercase();
             rows.retain(|p| {
-                p.name.to_ascii_lowercase().contains(&needle)
-                    || p.cmd.to_ascii_lowercase().contains(&needle)
-                    || p.user.to_ascii_lowercase().contains(&needle)
+                contains_ignore_ascii_case(&p.name, &needle)
+                    || contains_ignore_ascii_case(&p.cmd, &needle)
+                    || contains_ignore_ascii_case(&p.user, &needle)
                     || p.pid.to_string().contains(&needle)
             });
         }
@@ -671,14 +688,8 @@ impl App {
                             .unwrap_or(std::cmp::Ordering::Equal)
                     }),
                 SortField::Pid => a.pid.cmp(&b.pid),
-                SortField::Name => a
-                    .name
-                    .to_ascii_lowercase()
-                    .cmp(&b.name.to_ascii_lowercase()),
-                SortField::User => a
-                    .user
-                    .to_ascii_lowercase()
-                    .cmp(&b.user.to_ascii_lowercase()),
+                SortField::Name => cmp_ignore_ascii_case(&a.name, &b.name),
+                SortField::User => cmp_ignore_ascii_case(&a.user, &b.user),
                 SortField::Time => a.run_time.cmp(&b.run_time),
                 SortField::Io => io_rate(a)
                     .partial_cmp(&io_rate(b))
@@ -729,14 +740,8 @@ impl App {
                                 .unwrap_or(std::cmp::Ordering::Equal)
                         }),
                     SortField::Pid => pa.pid.cmp(&pb.pid),
-                    SortField::Name => pa
-                        .name
-                        .to_ascii_lowercase()
-                        .cmp(&pb.name.to_ascii_lowercase()),
-                    SortField::User => pa
-                        .user
-                        .to_ascii_lowercase()
-                        .cmp(&pb.user.to_ascii_lowercase()),
+                    SortField::Name => cmp_ignore_ascii_case(&pa.name, &pb.name),
+                    SortField::User => cmp_ignore_ascii_case(&pa.user, &pb.user),
                     SortField::Time => pa.run_time.cmp(&pb.run_time),
                     SortField::Io => io_rate(pa)
                         .partial_cmp(&io_rate(pb))
