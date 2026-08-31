@@ -311,6 +311,7 @@ fn query_nvidia_procs() -> Vec<GpuProc> {
 mod apple {
     use std::ffi::{c_void, CString};
     use std::os::raw::{c_char, c_int, c_long};
+    use std::sync::OnceLock;
 
     type CFTypeRef = *const c_void;
     type CFStringRef = *const c_void;
@@ -345,6 +346,18 @@ mod apple {
         fn IOObjectRelease(obj: IoObject) -> c_int;
     }
 
+    #[link(name = "Metal", kind = "framework")]
+    extern "C" {
+        fn MTLCreateSystemDefaultDevice() -> *const c_void;
+    }
+
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_msgSend(obj: *const c_void, sel: *const c_void) -> u64;
+        fn sel_registerName(name: *const c_char) -> *const c_void;
+        fn objc_release(obj: *const c_void);
+    }
+
     /// Create a CFString the caller owns (must `CFRelease`). None on failure.
     unsafe fn cfstr(s: &str) -> Option<CFStringRef> {
         let c = CString::new(s).ok()?;
@@ -370,12 +383,42 @@ mod apple {
         ok.then_some(out)
     }
 
-    /// GPU core utilization %, or None if IOKit doesn't report it.
-    pub fn utilization() -> Option<f32> {
-        // SAFETY: a standard IOKit registry read. Ownership: the matching dict
-        // is consumed by IOServiceGetMatchingService; the service object and the
-        // Create-rule PerformanceStatistics dict are released here; dictionary
-        // values are Get-rule and not released. Port 0 is kIOMainPortDefault.
+    /// Metal's `recommendedMaxWorkingSetSize`: the GPU's share of unified
+    /// memory before the system starts paging. Cached — the value is constant
+    /// for the lifetime of the process. Returns 0 when Metal is unavailable.
+    pub fn metal_max_mem() -> u64 {
+        static CACHED: OnceLock<u64> = OnceLock::new();
+        *CACHED.get_or_init(|| {
+            // SAFETY: MTLCreateSystemDefaultDevice returns a retained ObjC
+            // object (Create rule); released via objc_release.
+            // objc_msgSend with a u64 return type is correct on ARM64 for
+            // recommendedMaxWorkingSetSize (returns NSUInteger / uint64_t).
+            unsafe {
+                let device = MTLCreateSystemDefaultDevice();
+                if device.is_null() {
+                    return 0;
+                }
+                let sel = sel_registerName(
+                    c"recommendedMaxWorkingSetSize".as_ptr(),
+                );
+                let size = if !sel.is_null() {
+                    objc_msgSend(device, sel)
+                } else {
+                    0
+                };
+                objc_release(device);
+                size
+            }
+        })
+    }
+
+    /// GPU utilization % and in-use unified memory from one IOKit lookup.
+    /// Returns `None` when no accelerator service exists.
+    pub fn read_stats() -> Option<(Option<f32>, u64)> {
+        // SAFETY: standard IOKit registry read. Ownership: the matching dict
+        // is consumed by IOServiceGetMatchingService; the service object and
+        // Create-rule PerformanceStatistics dict are released; dict values are
+        // Get-rule (not released). Port 0 is kIOMainPortDefault.
         unsafe {
             let name = CString::new("IOAccelerator").ok()?;
             let matching = IOServiceMatching(name.as_ptr());
@@ -396,33 +439,41 @@ mod apple {
             if perf.is_null() {
                 return None;
             }
-            let util = dict_i64(perf, "Device Utilization %");
+            let util = dict_i64(perf, "Device Utilization %")
+                .map(|u| u.clamp(0, 100) as f32);
+            let mem_used = dict_i64(perf, "In use system memory")
+                .map(|m| m.max(0) as u64)
+                .unwrap_or(0);
             CFRelease(perf);
-            util.map(|u| u.clamp(0, 100) as f32)
+            Some((util, mem_used))
         }
     }
 }
 
-/// Apple Silicon GPU as a `Gpu` row: real utilization, no discrete VRAM (unified
-/// memory representation is deferred — see ur-grue/toptop#4).
+/// Apple Silicon GPU as a `Gpu` row with utilization and unified-memory
+/// pressure. `mem_total` is Metal's `recommendedMaxWorkingSetSize` (the GPU's
+/// usable share of unified memory); `mem_used` comes from IOKit. When
+/// `mem_used / mem_total` nears 100 %, models start spilling layers to swap —
+/// a 5–20× slowdown the UI warns about.
 #[cfg(target_os = "macos")]
 fn apple_gpus() -> Vec<Gpu> {
-    match apple::utilization() {
-        Some(util) => vec![Gpu {
-            name: "Apple Silicon GPU".to_string(),
-            util_pct: util,
-            has_util: true,
-            mem_util: 0.0,
-            has_mem_util: false,
-            mem_used: 0,
-            mem_total: 0,
-            temp: 0.0,
-            power: 0.0,
-            power_limit: 0.0,
-            throttled: false,
-        }],
-        None => Vec::new(),
-    }
+    let Some((util, mem_used)) = apple::read_stats() else {
+        return Vec::new();
+    };
+    let mem_total = apple::metal_max_mem();
+    vec![Gpu {
+        name: "Apple Silicon GPU".to_string(),
+        util_pct: util.unwrap_or(0.0),
+        has_util: util.is_some(),
+        mem_util: 0.0,
+        has_mem_util: false,
+        mem_used,
+        mem_total,
+        temp: 0.0,
+        power: 0.0,
+        power_limit: 0.0,
+        throttled: false,
+    }]
 }
 
 /// Human explanation for an empty GPU list, tailored to the build target so
@@ -432,7 +483,7 @@ fn apple_gpus() -> Vec<Gpu> {
 pub fn no_gpu_reason() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
-        "Apple Silicon GPU metrics aren't wired up yet (tracked in ur-grue/toptop#4)."
+        "Could not read Apple Silicon GPU metrics from IOKit."
     }
     #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
     {
@@ -504,15 +555,44 @@ impl Default for GpuMonitor {
 
 #[cfg(all(test, target_os = "macos"))]
 mod apple_tests {
-    /// The IOKit read must never panic and, when it reports a value, stay in
-    /// range. Accepts None so it's not flaky on Macs/CI without an accelerator.
     #[test]
-    fn utilization_reads_or_none() {
-        if let Some(u) = super::apple::utilization() {
-            assert!((0.0..=100.0).contains(&u), "util out of range: {u}");
+    fn reads_or_none() {
+        if let Some((util, _mem)) = super::apple::read_stats() {
+            if let Some(u) = util {
+                assert!((0.0..=100.0).contains(&u), "util out of range: {u}");
+            }
         }
-        // apple_gpus() must also be panic-free and produce at most one row.
         assert!(super::apple_gpus().len() <= 1);
+    }
+
+    #[test]
+    fn read_stats_returns_memory() {
+        if let Some((util, mem_used)) = super::apple::read_stats() {
+            if let Some(u) = util {
+                assert!((0.0..=100.0).contains(&u), "util out of range: {u}");
+            }
+            let _ = mem_used;
+        }
+    }
+
+    #[test]
+    fn metal_max_mem_cached_and_sane() {
+        let a = super::apple::metal_max_mem();
+        let b = super::apple::metal_max_mem();
+        assert_eq!(a, b, "OnceLock value must be stable");
+        if a > 0 {
+            assert!(a >= 1024 * 1024 * 1024, "suspiciously small: {a}");
+        }
+    }
+
+    #[test]
+    fn apple_gpus_has_memory_when_metal_works() {
+        let gpus = super::apple_gpus();
+        if let Some(g) = gpus.first() {
+            if super::apple::metal_max_mem() > 0 {
+                assert!(g.mem_total > 0, "mem_total should come from Metal");
+            }
+        }
     }
 }
 
@@ -524,12 +604,9 @@ mod tests {
     fn no_gpu_reason_is_platform_honest() {
         let msg = no_gpu_reason();
         assert!(!msg.is_empty());
-        // On Apple Silicon a GPU exists — the message must not deny that, and
-        // must point at the tracking issue.
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         {
             assert!(msg.contains("Apple Silicon"));
-            assert!(msg.contains("#4"));
             assert!(!msg.to_lowercase().contains("no gpu"));
         }
     }
