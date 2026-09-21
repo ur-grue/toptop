@@ -15,6 +15,7 @@ _toptop() {
         '--no-save[do not write the config back on exit]' \
         '--list-themes[print available themes and exit]' \
         '--snapshot[print a one-shot text snapshot and exit]' \
+        '--diagnose[print a paste-able why-is-it-slow verdict card and exit]' \
         '--export[print metrics and exit]::format:(json csv prometheus)' \
         '--serve-metrics[run a Prometheus metrics endpoint]::address:' \
         '--alert-vram[VRAM % that triggers the spill-risk alert]:percent:' \

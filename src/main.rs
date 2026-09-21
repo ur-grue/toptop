@@ -46,6 +46,8 @@ OPTIONS:
         --no-save        Don't write the config back on exit
         --list-themes    Print available themes and exit
         --snapshot       Print a one-shot text snapshot and exit (no TUI)
+        --diagnose       Print a paste-able why-is-it-slow verdict card and exit
+                         (samples ~3 s; works with --demo and --llm-server)
         --export <FMT>   Print metrics and exit: 'json' (default), 'csv', or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus endpoint (default 127.0.0.1:9709)
         --otlp <URL>     Push OpenTelemetry metrics to a collector
@@ -82,6 +84,7 @@ struct Opts {
     config_path: Option<PathBuf>,
     no_save: bool,
     snapshot: bool,
+    diagnose: bool,
     record: Option<PathBuf>,
     replay: Option<PathBuf>,
     export: Option<&'static str>,
@@ -118,6 +121,7 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
         config_path: None,
         no_save: false,
         snapshot: false,
+        diagnose: false,
         record: None,
         replay: None,
         export: None,
@@ -255,6 +259,7 @@ fn parse_args(argv: &[String], cfg: Config) -> Result<Opts, String> {
                 opts.replay = Some(PathBuf::from(p));
             }
             "--snapshot" => opts.snapshot = true,
+            "--diagnose" => opts.diagnose = true,
             "--export" => {
                 // Optional format argument: `json` (default) or `prometheus`.
                 opts.export = Some(match args.peek().map(|s| s.as_str()) {
@@ -335,6 +340,7 @@ fn main() -> Result<()> {
         config_path,
         no_save,
         snapshot,
+        diagnose,
         record,
         replay,
         export,
@@ -362,6 +368,10 @@ fn main() -> Result<()> {
 
     if snapshot {
         return run_snapshot(&cfg);
+    }
+
+    if diagnose {
+        return run_diagnose(&cfg, demo);
     }
 
     if !remote_hosts.is_empty() {
@@ -434,6 +444,32 @@ fn run_export(cfg: &Config, format: &str) -> Result<()> {
         _ => println!("{}", toptop::export::to_json(&app.collector, 20)),
     }
     io::stdout().flush().ok();
+    Ok(())
+}
+
+/// How long `--diagnose` samples before it renders. The GPU poller and the
+/// inference-server scraper each run on their own cadence (≈2 s), so a card
+/// taken from a single tick would often show a GPU with no server yet.
+const DIAGNOSE_SAMPLE_TICKS: u32 = 4;
+const DIAGNOSE_TICK: Duration = Duration::from_millis(800);
+
+/// `--diagnose`: sample for a few seconds, then print the verdict card and
+/// exit. `--demo` overlays the synthetic GPU + server so the card can be seen
+/// on any machine — and says so on the card.
+fn run_diagnose(cfg: &Config, demo: bool) -> Result<()> {
+    let mut app = App::new(cfg);
+    app.demo = demo;
+    for _ in 0..DIAGNOSE_SAMPLE_TICKS {
+        std::thread::sleep(DIAGNOSE_TICK);
+        app.on_tick();
+    }
+    let meta = toptop::card::CardMeta {
+        host: app.collector.host.hostname.clone(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        when: chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string(),
+        demo,
+    };
+    print!("{}", toptop::card::render(&app.collector, &meta));
     Ok(())
 }
 
