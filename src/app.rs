@@ -246,10 +246,11 @@ fn contains_ignore_ascii_case(haystack: &str, needle: &str) -> bool {
     if n == 0 {
         return true;
     }
-    haystack
-        .as_bytes()
-        .windows(n)
-        .any(|w| w.iter().zip(needle.as_bytes()).all(|(h, n)| h.to_ascii_lowercase() == *n))
+    haystack.as_bytes().windows(n).any(|w| {
+        w.iter()
+            .zip(needle.as_bytes())
+            .all(|(h, n)| h.to_ascii_lowercase() == *n)
+    })
 }
 
 /// Top-section layout presets, cycled with `L` and persisted to config.

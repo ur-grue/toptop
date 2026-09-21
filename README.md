@@ -397,12 +397,15 @@ percentiles, and names the bottleneck (bandwidth-bound, KV thrashing, spill, thr
 
 ### Platform support
 
-`toptop` is **Linux-first**, and **verified on macOS** (Homebrew source build on an
-Intel iMac): per‑core CPU, memory, network, disk **including per‑process I/O rates**,
-**temperature sensors** (SMC), and the full process table all work. The Linux‑specific
-parts — GPU metrics (`nvidia-smi`/`sysfs`), battery, and the `/proc`‑based connections
-inspector — degrade gracefully to empty panels there (Apple‑GPU support is tracked in
-[#4](https://github.com/ur-grue/toptop/issues/4)). On light terminal backgrounds, use
+`toptop` is **Linux-first**, and **verified on macOS**: per‑core CPU, memory,
+network, disk **including per‑process I/O rates**, **temperature sensors** (SMC),
+and the full process table all work. **The GPU panel and the AI view work on every
+Mac**: Apple Silicon reports GPU utilization and unified‑memory pressure against
+Metal's working‑set ceiling (the spill warning fires before the model pages), and
+the discrete AMD cards in Intel Macs report VRAM in use, temperature and power —
+all read from IOKit and Metal directly, no root, no extra crates. The
+`/proc`‑based connections inspector degrades to an empty panel there; inference
+servers are found via `--llm-server host:port`. On light terminal backgrounds, use
 `--theme paper`.
 
 **Windows** is **best-effort**: it builds and its tests run in CI on
