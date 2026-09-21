@@ -309,6 +309,7 @@ fn query_nvidia_procs() -> Vec<GpuProc> {
 /// the system CoreFoundation/IOKit frameworks, so we add no crates.
 #[cfg(target_os = "macos")]
 mod apple {
+    use super::{MacGpuDevice, MacGpuStats};
     use std::ffi::{c_void, CString};
     use std::os::raw::{c_char, c_int, c_long};
     use std::sync::OnceLock;
@@ -383,38 +384,75 @@ mod apple {
         ok.then_some(out)
     }
 
-    /// Metal's `recommendedMaxWorkingSetSize`: the GPU's share of unified
-    /// memory before the system starts paging. Cached — the value is constant
-    /// for the lifetime of the process. Returns 0 when Metal is unavailable.
-    pub fn metal_max_mem() -> u64 {
-        static CACHED: OnceLock<u64> = OnceLock::new();
-        *CACHED.get_or_init(|| {
+    /// Send a no-argument message and get the raw register back.
+    unsafe fn send(obj: *const c_void, selector: &std::ffi::CStr) -> u64 {
+        let sel = sel_registerName(selector.as_ptr());
+        if sel.is_null() {
+            0
+        } else {
+            objc_msgSend(obj, sel)
+        }
+    }
+
+    /// What the machine falls back to when Metal is unavailable: the build
+    /// target still tells us the memory architecture.
+    fn fallback_device() -> MacGpuDevice {
+        MacGpuDevice {
+            name: if cfg!(target_arch = "aarch64") {
+                "Apple Silicon GPU".to_string()
+            } else {
+                "GPU".to_string()
+            },
+            unified: cfg!(target_arch = "aarch64"),
+            max_mem: 0,
+        }
+    }
+
+    /// The default Metal device: name, memory architecture and
+    /// `recommendedMaxWorkingSetSize`. Cached — none of it changes for the
+    /// lifetime of the process.
+    pub fn metal_device() -> &'static MacGpuDevice {
+        static CACHED: OnceLock<MacGpuDevice> = OnceLock::new();
+        CACHED.get_or_init(|| {
             // SAFETY: MTLCreateSystemDefaultDevice returns a retained ObjC
-            // object (Create rule); released via objc_release.
-            // objc_msgSend with a u64 return type is correct on ARM64 for
-            // recommendedMaxWorkingSetSize (returns NSUInteger / uint64_t).
+            // object (Create rule); released via objc_release once every
+            // property has been copied out. `name` returns an NSString owned
+            // by the device (Get rule) — read via UTF8String before release.
+            // objc_msgSend returning u64 is the integer/pointer register on
+            // both x86_64 and ARM64; BOOL only defines the low byte, so
+            // hasUnifiedMemory is masked.
             unsafe {
                 let device = MTLCreateSystemDefaultDevice();
                 if device.is_null() {
-                    return 0;
+                    return fallback_device();
                 }
-                let sel = sel_registerName(
-                    c"recommendedMaxWorkingSetSize".as_ptr(),
-                );
-                let size = if !sel.is_null() {
-                    objc_msgSend(device, sel)
+                let max_mem = send(device, c"recommendedMaxWorkingSetSize");
+                let unified = send(device, c"hasUnifiedMemory") & 0xff != 0;
+                let ns_name = send(device, c"name") as *const c_void;
+                let name = if ns_name.is_null() {
+                    String::new()
                 } else {
-                    0
+                    let utf8 = send(ns_name, c"UTF8String") as *const c_char;
+                    if utf8.is_null() {
+                        String::new()
+                    } else {
+                        std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned()
+                    }
                 };
                 objc_release(device);
-                size
+                let name = if name.trim().is_empty() {
+                    fallback_device().name
+                } else {
+                    name
+                };
+                MacGpuDevice { name, unified, max_mem }
             }
         })
     }
 
-    /// GPU utilization % and in-use unified memory from one IOKit lookup.
-    /// Returns `None` when no accelerator service exists.
-    pub fn read_stats() -> Option<(Option<f32>, u64)> {
+    /// One `PerformanceStatistics` sample from the first `IOAccelerator`
+    /// service. Returns `None` when no accelerator service exists.
+    pub fn read_stats() -> Option<MacGpuStats> {
         // SAFETY: standard IOKit registry read. Ownership: the matching dict
         // is consumed by IOServiceGetMatchingService; the service object and
         // Create-rule PerformanceStatistics dict are released; dict values are
@@ -441,39 +479,89 @@ mod apple {
             }
             let util = dict_i64(perf, "Device Utilization %")
                 .map(|u| u.clamp(0, 100) as f32);
-            let mem_used = dict_i64(perf, "In use system memory")
+            let sys_mem_used = dict_i64(perf, "In use system memory")
                 .map(|m| m.max(0) as u64)
                 .unwrap_or(0);
+            // Discrete cards (AMD in Intel Macs) publish VRAM residency and
+            // sensors under these keys; Apple Silicon has none of them.
+            let vid_mem_used = dict_i64(perf, "inUseVidMemoryBytes").map(|m| m.max(0) as u64);
+            let temp = dict_i64(perf, "Temperature(C)")
+                .filter(|t| *t > 0)
+                .map(|t| t as f32);
+            let power = dict_i64(perf, "Total Power(W)")
+                .filter(|p| *p > 0)
+                .map(|p| p as f32);
             CFRelease(perf);
-            Some((util, mem_used))
+            Some(MacGpuStats {
+                util,
+                sys_mem_used,
+                vid_mem_used,
+                temp,
+                power,
+            })
         }
     }
 }
 
-/// Apple Silicon GPU as a `Gpu` row with utilization and unified-memory
-/// pressure. `mem_total` is Metal's `recommendedMaxWorkingSetSize` (the GPU's
-/// usable share of unified memory); `mem_used` comes from IOKit. When
-/// `mem_used / mem_total` nears 100 %, models start spilling layers to swap —
+/// What Metal reports about the default GPU on a Mac. Platform-neutral so the
+/// row builder below can be unit-tested anywhere.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MacGpuDevice {
+    /// Marketing name from `MTLDevice.name`, e.g. "Apple M2 Max" or
+    /// "AMD Radeon Pro 5700 XT".
+    pub name: String,
+    /// `MTLDevice.hasUnifiedMemory`: true on Apple Silicon, false for the
+    /// discrete AMD cards in Intel Macs.
+    pub unified: bool,
+    /// `recommendedMaxWorkingSetSize`: the GPU's usable share of unified
+    /// memory, or the card's VRAM on a discrete GPU. 0 when Metal is absent.
+    pub max_mem: u64,
+}
+
+/// One IOKit `PerformanceStatistics` sample, platform-neutral.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct MacGpuStats {
+    pub util: Option<f32>,
+    /// "In use system memory" — what a unified-memory GPU has resident.
+    pub sys_mem_used: u64,
+    /// "inUseVidMemoryBytes" — what a discrete card has resident in VRAM.
+    pub vid_mem_used: Option<u64>,
+    pub temp: Option<f32>,
+    pub power: Option<f32>,
+}
+
+/// Build the `Gpu` row for a Mac GPU. Unified-memory GPUs (Apple Silicon)
+/// report their resident system memory against Metal's working-set ceiling;
+/// discrete cards (AMD in Intel Macs) report VRAM in use against VRAM total.
+/// When `mem_used / mem_total` nears 100 %, models start spilling layers —
 /// a 5–20× slowdown the UI warns about.
-#[cfg(target_os = "macos")]
-fn apple_gpus() -> Vec<Gpu> {
-    let Some((util, mem_used)) = apple::read_stats() else {
-        return Vec::new();
+pub fn mac_gpu_row(dev: &MacGpuDevice, s: &MacGpuStats) -> Gpu {
+    let mem_used = if dev.unified {
+        s.sys_mem_used
+    } else {
+        s.vid_mem_used.unwrap_or(0)
     };
-    let mem_total = apple::metal_max_mem();
-    vec![Gpu {
-        name: "Apple Silicon GPU".to_string(),
-        util_pct: util.unwrap_or(0.0),
-        has_util: util.is_some(),
+    Gpu {
+        name: dev.name.clone(),
+        util_pct: s.util.unwrap_or(0.0),
+        has_util: s.util.is_some(),
         mem_util: 0.0,
         has_mem_util: false,
         mem_used,
-        mem_total,
-        temp: 0.0,
-        power: 0.0,
+        mem_total: dev.max_mem,
+        temp: s.temp.unwrap_or(0.0),
+        power: s.power.unwrap_or(0.0),
         power_limit: 0.0,
         throttled: false,
-    }]
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn apple_gpus() -> Vec<Gpu> {
+    let Some(stats) = apple::read_stats() else {
+        return Vec::new();
+    };
+    vec![mac_gpu_row(apple::metal_device(), &stats)]
 }
 
 /// Human explanation for an empty GPU list, tailored to the build target so
@@ -487,7 +575,7 @@ pub fn no_gpu_reason() -> &'static str {
     }
     #[cfg(all(target_os = "macos", not(target_arch = "aarch64")))]
     {
-        "No GPU metrics source on this Mac."
+        "Could not read GPU metrics from IOKit (no IOAccelerator service)."
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -557,8 +645,8 @@ impl Default for GpuMonitor {
 mod apple_tests {
     #[test]
     fn reads_or_none() {
-        if let Some((util, _mem)) = super::apple::read_stats() {
-            if let Some(u) = util {
+        if let Some(s) = super::apple::read_stats() {
+            if let Some(u) = s.util {
                 assert!((0.0..=100.0).contains(&u), "util out of range: {u}");
             }
         }
@@ -566,30 +654,26 @@ mod apple_tests {
     }
 
     #[test]
-    fn read_stats_returns_memory() {
-        if let Some((util, mem_used)) = super::apple::read_stats() {
-            if let Some(u) = util {
-                assert!((0.0..=100.0).contains(&u), "util out of range: {u}");
-            }
-            let _ = mem_used;
+    fn metal_device_is_cached_and_named() {
+        let a = super::apple::metal_device();
+        let b = super::apple::metal_device();
+        assert!(std::ptr::eq(a, b), "OnceLock value must be stable");
+        assert!(!a.name.trim().is_empty(), "device must have a name");
+        if a.max_mem > 0 {
+            assert!(a.max_mem >= 1024 * 1024 * 1024, "suspiciously small: {}", a.max_mem);
+        }
+        // When Metal answered, it must agree with the build target on the
+        // memory architecture: unified on Apple Silicon, discrete on Intel.
+        if a.max_mem > 0 {
+            assert_eq!(a.unified, cfg!(target_arch = "aarch64"));
         }
     }
 
     #[test]
-    fn metal_max_mem_cached_and_sane() {
-        let a = super::apple::metal_max_mem();
-        let b = super::apple::metal_max_mem();
-        assert_eq!(a, b, "OnceLock value must be stable");
-        if a > 0 {
-            assert!(a >= 1024 * 1024 * 1024, "suspiciously small: {a}");
-        }
-    }
-
-    #[test]
-    fn apple_gpus_has_memory_when_metal_works() {
-        let gpus = super::apple_gpus();
-        if let Some(g) = gpus.first() {
-            if super::apple::metal_max_mem() > 0 {
+    fn row_uses_the_real_device_name() {
+        for g in super::apple_gpus() {
+            assert_eq!(g.name, super::apple::metal_device().name);
+            if super::apple::metal_device().max_mem > 0 {
                 assert!(g.mem_total > 0, "mem_total should come from Metal");
             }
         }
@@ -609,6 +693,66 @@ mod tests {
             assert!(msg.contains("Apple Silicon"));
             assert!(!msg.to_lowercase().contains("no gpu"));
         }
+    }
+
+    #[test]
+    fn intel_mac_with_discrete_amd_is_named_and_measured_as_vram() {
+        // An Intel iMac with a Radeon: Metal says "not unified", IOKit has
+        // VRAM-in-use, temperature and power. The row must carry the real
+        // card name (not "Apple Silicon GPU") and VRAM, not system memory.
+        let dev = MacGpuDevice {
+            name: "AMD Radeon Pro 5700 XT".into(),
+            unified: false,
+            max_mem: 16 * 1024 * 1024 * 1024,
+        };
+        let s = MacGpuStats {
+            util: Some(35.0),
+            sys_mem_used: 7_139_328,
+            vid_mem_used: Some(2_450_108_416),
+            temp: Some(63.0),
+            power: Some(14.0),
+        };
+        let g = mac_gpu_row(&dev, &s);
+        assert_eq!(g.name, "AMD Radeon Pro 5700 XT");
+        assert_eq!(g.mem_used, 2_450_108_416);
+        assert_eq!(g.mem_total, 16 * 1024 * 1024 * 1024);
+        assert_eq!(g.temp, 63.0);
+        assert_eq!(g.power, 14.0);
+        assert!(g.has_util && g.util_pct == 35.0);
+    }
+
+    #[test]
+    fn apple_silicon_reports_unified_memory_against_working_set() {
+        let dev = MacGpuDevice {
+            name: "Apple M2 Max".into(),
+            unified: true,
+            max_mem: 48 * 1024 * 1024 * 1024,
+        };
+        let s = MacGpuStats {
+            util: Some(80.0),
+            sys_mem_used: 30 * 1024 * 1024 * 1024,
+            vid_mem_used: None,
+            temp: None,
+            power: None,
+        };
+        let g = mac_gpu_row(&dev, &s);
+        assert_eq!(g.name, "Apple M2 Max");
+        assert_eq!(g.mem_used, 30 * 1024 * 1024 * 1024);
+        // No sensor → 0, which the UI renders as "—", never as 0 °C.
+        assert_eq!(g.temp, 0.0);
+        assert_eq!(g.power, 0.0);
+    }
+
+    #[test]
+    fn mac_gpu_without_utilization_says_so() {
+        let dev = MacGpuDevice {
+            name: "Apple M1".into(),
+            unified: true,
+            max_mem: 0,
+        };
+        let g = mac_gpu_row(&dev, &MacGpuStats::default());
+        assert!(!g.has_util);
+        assert_eq!(g.mem_total, 0);
     }
 
     #[test]
