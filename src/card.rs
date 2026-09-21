@@ -40,7 +40,10 @@ pub fn render(c: &Collector, meta: &CardMeta) -> String {
     out.push("=".repeat(WIDTH));
     out.extend(row_wrapped("HOST", &meta.host));
     if meta.demo {
-        out.push(row("NOTE", "simulated GPU + server (--demo); system numbers are real"));
+        out.push(row(
+            "NOTE",
+            "simulated GPU + server (--demo); system numbers are real",
+        ));
     }
     push_findings(&mut out, c);
     out.push(String::new());
@@ -60,7 +63,10 @@ fn header(meta: &CardMeta) -> String {
 }
 
 fn footer(meta: &CardMeta) -> String {
-    format!("toptop v{} · {} · `toptop --diagnose`", meta.version, REPO_URL)
+    format!(
+        "toptop v{} · {} · `toptop --diagnose`",
+        meta.version, REPO_URL
+    )
 }
 
 fn push_findings(out: &mut Vec<String>, c: &Collector) {
@@ -302,8 +308,14 @@ mod tests {
             .find(|l| l.starts_with("VERDICT"))
             .expect("a verdict row");
         assert!(verdict.contains("MEMORY-BANDWIDTH BOUND"), "{verdict}");
-        assert!(card.contains("bandwidth 92% · compute 24%"), "evidence stays checkable");
-        assert!(card.contains("faster GPU core would not help"), "advice is on the card");
+        assert!(
+            card.contains("bandwidth 92% · compute 24%"),
+            "evidence stays checkable"
+        );
+        assert!(
+            card.contains("faster GPU core would not help"),
+            "advice is on the card"
+        );
         assert!(card.trim_end().ends_with("`toptop --diagnose`"));
         assert!(card.contains(REPO_URL), "the link is the growth loop");
     }
@@ -311,7 +323,11 @@ mod tests {
     #[test]
     fn every_line_fits_the_width() {
         let card = render(&bandwidth_bound(), &meta());
-        assert!(widest(&card) <= WIDTH, "widest line {} > {WIDTH}", widest(&card));
+        assert!(
+            widest(&card) <= WIDTH,
+            "widest line {} > {WIDTH}",
+            widest(&card)
+        );
     }
 
     #[test]
@@ -331,7 +347,10 @@ mod tests {
         // whitespace-normalised text.
         let flat = card.split_whitespace().collect::<Vec<_>>().join(" ");
         let system_end = format!("swap {}", human_bytes(c.mem.swap_used));
-        assert!(flat.contains(&system_end), "the end of the system line survives");
+        assert!(
+            flat.contains(&system_end),
+            "the end of the system line survives"
+        );
         assert!(card.contains("Blackwell"));
     }
 
@@ -353,7 +372,10 @@ mod tests {
         let card = render(&c, &meta());
         assert!(card.contains("VERDICT  NO GPU METRICS"));
         assert!(card.contains("--llm-server"), "points at the manual path");
-        assert!(card.contains("SERVER   vLLM:8000"), "server data is still real");
+        assert!(
+            card.contains("SERVER   vLLM:8000"),
+            "server data is still real"
+        );
         assert!(card.contains("SYSTEM   "));
         assert!(widest(&card) <= WIDTH);
     }
