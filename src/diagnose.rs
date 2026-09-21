@@ -106,15 +106,30 @@ pub fn diagnose(c: &Collector) -> Vec<Finding> {
         .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
     {
         let model = if model.is_empty() { tag.clone() } else { model };
-        out.push(Finding {
-            severity: Level::Crit,
-            headline: "MODEL PARTLY ON CPU",
-            evidence: format!("{tag} · {model} {pct:.0}% on GPU"),
-            advice: "The model did not fit, so the rest runs on the CPU at a \
-                     fraction of the speed. Use a smaller quantization, a \
-                     shorter context (num_ctx), or free VRAM held by another \
-                     model.",
-        });
+        if pct <= 0.0 {
+            // Nothing on the GPU is a different problem from "not enough":
+            // the runtime has no usable GPU backend at all (Intel Macs,
+            // unsupported cards, a CPU-only build) or was told not to use it.
+            out.push(Finding {
+                severity: Level::Crit,
+                headline: "MODEL RUNNING ON CPU",
+                evidence: format!("{tag} · {model} 0% on GPU"),
+                advice: "The runtime is not using the GPU at all — no supported \
+                         backend for this card, or it was started CPU-only. Check \
+                         `ollama ps` (PROCESSOR column) and the server log's GPU \
+                         detection line before tuning anything else.",
+            });
+        } else {
+            out.push(Finding {
+                severity: Level::Crit,
+                headline: "MODEL PARTLY ON CPU",
+                evidence: format!("{tag} · {model} {pct:.0}% on GPU"),
+                advice: "The model did not fit, so the rest runs on the CPU at a \
+                         fraction of the speed. Use a smaller quantization, a \
+                         shorter context (num_ctx), or free VRAM held by another \
+                         model.",
+            });
+        }
     }
 
     // 2. Preemption: the server is destroying work it already did.
@@ -278,6 +293,26 @@ mod tests {
         assert_eq!(f[0].headline, "MODEL PARTLY ON CPU");
         assert!(f[0].evidence.contains("llama3:70b 58% on GPU"));
         assert!(f[0].advice.contains("quantization"));
+    }
+
+    #[test]
+    fn a_model_entirely_on_cpu_is_a_backend_problem_not_a_fit_problem() {
+        let mut c = Collector::new(8);
+        c.gpus = vec![gpu(10.0, 10.0, 25, 100)];
+        c.servers = vec![ServerStats {
+            runtime: "Ollama",
+            port: 11434,
+            model: "mistral-small3.1:24b".into(),
+            gpu_offload_pct: Some(0.0),
+            ..Default::default()
+        }];
+        let f = diagnose(&c);
+        assert_eq!(f[0].headline, "MODEL RUNNING ON CPU");
+        assert!(f[0].advice.contains("ollama ps"));
+        assert!(
+            !f[0].advice.contains("did not fit"),
+            "VRAM is 25% used — it would fit"
+        );
     }
 
     #[test]
