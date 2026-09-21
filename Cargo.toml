@@ -1,6 +1,6 @@
 [package]
 name = "toptop"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 rust-version = "1.88"
 description = "Local-inference GPU monitor and htop alternative — live tokens/sec, VRAM-spill alerts, compute-vs-bandwidth diagnosis, Prometheus export, and auto-discovery for vLLM/Ollama/llama.cpp/TGI."

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-09-21
+
+### Fixed
+
+- **A Mac now finds its own Ollama with no flags.** Three bugs stacked on
+  the platform 1.1.0 was for: `--llm-server` only ever tried a Prometheus
+  `/metrics` endpoint, so Ollama and LM Studio targets were never recognised;
+  `localhost` resolves to `::1` first on macOS while Ollama listens on
+  `127.0.0.1` only, and only the first address was tried; and discovery was
+  `/proc`-only. Off Linux the well-known ports (Ollama 11434, LM Studio 1234,
+  vLLM/SGLang 8000 and 30000, llama.cpp 8080, TensorRT-LLM 8001) are now
+  probed directly, hostnames are tried on every address they resolve to, and
+  manual targets use the same three-way probe as discovery.
+- **`MODEL RUNNING ON CPU`** is its own verdict: 0 % of a model on the GPU
+  means the runtime has no usable backend (Intel Macs, unsupported cards,
+  CPU-only builds), which is a different fix from "it did not fit"
+  (`MODEL PARTLY ON CPU`).
+
 ## [1.1.0] — 2026-09-21
 
 The release that makes the tagline true on every Mac, and gives the verdict a
@@ -399,7 +417,8 @@ way out of the terminal.
 
 Initial public release.
 
-[Unreleased]: https://github.com/ur-grue/toptop/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ur-grue/toptop/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/ur-grue/toptop/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ur-grue/toptop/compare/v1.0.2...v1.1.0
 [1.0.1]: https://github.com/ur-grue/toptop/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ur-grue/toptop/releases/tag/v1.0.0

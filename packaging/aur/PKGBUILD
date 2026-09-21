@@ -1,6 +1,6 @@
 # Maintainer: ur-grue <https://github.com/ur-grue>
 pkgname=toptop
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc="htop/btop-class system monitor with a local-LLM view: tokens/sec, VRAM-spill and bandwidth-bound verdicts"
 arch=('x86_64' 'aarch64')
