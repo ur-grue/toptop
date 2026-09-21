@@ -6,25 +6,29 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
 
 ## 0. Pre-flight checklist
 
-- [x] `git tag -a v1.0.0 && git push origin v1.0.0` (triggers the release
-      workflow → tarball + .deb attached to the GitHub Release). Done for
-      v1.0.0 and v1.0.1; both have a tarball + .deb attached.
-- [x] Homebrew: the main repo is its own tap (`Formula/toptop.rb`, pinned to
-      v1.0.1, sha256 verified against the GitHub tarball) — `brew tap
+- [ ] **Tag v1.1.0** — the release that carries Apple Silicon and
+      `--diagnose`. `git tag -a v1.1.0` (annotated) then `git push origin
+      v1.1.0` triggers the release workflow (binaries for every platform +
+      .deb on the GitHub Release). v1.0.0–v1.0.2 are done.
+- [x] Homebrew: the main repo is its own tap (`Formula/toptop.rb`) — `brew tap
       ur-grue/toptop https://github.com/ur-grue/toptop`. Optionally create
       `ur-grue/homebrew-tap` later for the shorter `brew install
       ur-grue/tap/toptop` form.
       **Re-pin `url` + `sha256` on every release** — a stale formula installs
-      an old version on the first wave of traffic.
-- [ ] Upload `assets/social-preview.png` as the repo social-preview image (Settings → General → Social preview): upload
-      a render of `assets/ai-demo.svg` — it's what shows when the link is shared
+      an old version on the first wave of traffic. For v1.1.0:
+      `curl -sL https://github.com/ur-grue/toptop/archive/refs/tags/v1.1.0.tar.gz | shasum -a 256`
+- [ ] `cargo publish` after the tag (1.0.2 is on crates.io).
+- [ ] Upload `assets/social-preview.png` as the repo social-preview image
+      (Settings → General → Social preview). Without it every shared link is
+      the grey default card. One minute; there is no API for it.
+- [x] Homepage URL set, Discussions enabled (2026-09-21).
 - [ ] Verify README renders correctly on github.com/ur-grue/toptop (banner,
-      animated hero, screenshots)
+      animated hero, the `--diagnose` card block)
 
 ## 1. Show HN (news.ycombinator.com/submit)
 
 **Title:**
-> Show HN: Toptop – htop for local LLMs (tokens/sec, VRAM spill, the metrics nvidia-smi hides)
+> Show HN: Toptop – htop for local LLMs, with a paste-able "why is it slow?" verdict
 
 **URL:** `https://github.com/ur-grue/toptop`
 
@@ -48,6 +52,12 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
 > - `--serve-metrics` = a Prometheus endpoint; `--remote host1,host2` = a
 >   fleet view over plain SSH (no agents)
 >
+> New in 1.1: it runs on Apple Silicon (GPU util + unified-memory pressure
+> via IOKit/Metal, no root, no extra crates — asitop has been unmaintained
+> since 2024), and `toptop --diagnose` prints the verdict as a 72-column
+> text card you can paste into an issue or a thread, numbers and advice
+> included.
+>
 > No GPU? `toptop --demo` simulates a busy 4090 + vLLM server so you can see
 > the whole AI view (spill warning included) on any machine.
 >
@@ -58,12 +68,22 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
 ## 2. r/LocalLLaMA
 
 **Title:**
-> I made an htop alternative that shows why your local model is slow (mem-bandwidth vs compute, VRAM spill warnings, live tok/s from Ollama/vLLM/llama.cpp)
+> I made an htop alternative that tells you *why* your local model is slow — and prints a verdict you can paste here (Ollama/vLLM/llama.cpp, NVIDIA + Apple Silicon)
 
-**Body:** lead with the animated demo, then the same pitch as HN but warmer;
-end with "it's free/GPL, single binary — would love feedback on what metrics
-you'd want next." Cross-post to r/selfhosted and r/rust (r/rust angle: zero-dep
-JSON parser + hand-rolled HTTP + ratatui, 65 tests, headless TUI testing).
+**Body:** lead with a real `toptop --diagnose` card (not the demo — a card
+from an actual Ollama box, `MODEL PARTLY ON CPU` if you can get one), then
+the animated AI-view demo, then the same pitch as HN but warmer. Ask the
+question that turns readers into users: "if your model is slow, run
+`toptop --diagnose` and paste it — I'll read every one." End with "it's
+free/GPL, single binary — what metric would you want next?"
+
+**Apple Silicon post (separate, a few days later, r/LocalLLaMA + r/macapps):**
+> asitop is dead since 2024 — I built GPU util + unified-memory pressure +
+> live Ollama tok/s for Apple Silicon into one htop-style monitor
+
+Cross-post the main post to r/selfhosted and r/rust (r/rust angle: zero-dep
+JSON parser + hand-rolled HTTP + raw IOKit/Metal FFI + ratatui, 219 tests,
+headless TUI testing).
 
 ## 3. X/Twitter thread (attach a screen recording of the AI view)
 
@@ -83,11 +103,17 @@ JSON parser + hand-rolled HTTP + ratatui, 65 tests, headless TUI testing).
 ## 4. Slow-burn channels
 
 - **This Week in Rust** — submit to the "Crate of the Week" thread
-- **awesome-lists PRs**: awesome-rust (Utilities), awesome-selfhosted,
-  awesome-llm / awesome-local-llm lists, terminal-apps lists
-- **crates.io**: `cargo publish` (metadata already set) → free discovery.
-  Do this *before* the Show HN post — "is it on crates.io?" is always the
-  first comment.
+- **List PRs** — exact entries and order in `docs/LISTINGS.md`: Ollama
+  community integrations (first: biggest audience, no star gate),
+  awesome-tuis, awesome-ratatui; awesome-rust once >50 stars.
+- **Answer threads, don't post ads**: every "why is my model slow" thread on
+  r/LocalLLaMA, r/ollama and the Ollama/llama.cpp issue trackers gets a
+  reply that is the actual diagnosis plus "here's the `toptop --diagnose`
+  card from my box". The card carries the link.
+- **crates.io**: `cargo publish` after each tag. "is it on crates.io?" is
+  always the first comment.
+- **AUR**: `packaging/aur/PKGBUILD`, steps in `docs/LISTINGS.md`. Arch users
+  are disproportionately TUI users.
 - **Ollama / vLLM Discords** — share in #show-and-tell style channels, framed
   as "a debugging tool for you", not an ad
 

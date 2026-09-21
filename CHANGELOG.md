@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-21
+
+The release that makes the tagline true on every Mac, and gives the verdict a
+way out of the terminal.
+
+### Added
+
+- **Apple Silicon GPU metrics.** The GPU panel and the AI view now work on
+  M-series Macs: GPU utilization from IOKit's `IOAccelerator` statistics and
+  unified-memory pressure against Metal's `recommendedMaxWorkingSetSize` — the
+  ceiling past which a model starts paging. The spill warning fires before
+  that happens. Raw FFI against the system frameworks; still zero crates.
+  (#4)
+- **Intel Macs with discrete AMD GPUs** get the same panel: the card's real
+  name from Metal, VRAM in use, temperature and power from the driver.
+- **`toptop --diagnose`** samples for about three seconds and prints the
+  "why is it slow?" verdict as a 72-column plain-text card — evidence, advice,
+  GPU, server and system rows, and a link — built to be pasted into a GitHub
+  issue or a forum thread unchanged. `--demo --diagnose` shows it on any
+  machine and says so on the card.
+- **`MODEL PARTLY ON CPU`** verdict: when Ollama reports less than 100 % of a
+  model on the GPU, the diagnosis names it. It is the most common silent
+  slowdown in local inference and was not a finding before.
+- `packaging/aur/PKGBUILD` and `docs/LISTINGS.md` for distribution.
+
+### Changed
+
+- Hot paths allocate nothing per tick; release builds use fat LTO and a
+  single codegen unit. The binary is smaller and the idle CPU cost lower.
+- The README platform section describes what actually works on macOS instead
+  of pointing at an open issue.
+
+### Fixed
+
+- The AI view on a Mac without readable GPU metrics explains why instead of
+  claiming there is no GPU.
+
 ## [1.0.2] — 2026-08-20
 
 ### Added
@@ -362,6 +399,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial public release.
 
-[Unreleased]: https://github.com/ur-grue/toptop/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/ur-grue/toptop/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ur-grue/toptop/compare/v1.0.2...v1.1.0
 [1.0.1]: https://github.com/ur-grue/toptop/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ur-grue/toptop/releases/tag/v1.0.0
