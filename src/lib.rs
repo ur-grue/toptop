@@ -3,6 +3,7 @@
 
 pub mod alerts;
 pub mod app;
+pub mod card;
 pub mod config;
 pub mod demo;
 pub mod diagnose;

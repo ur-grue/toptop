@@ -44,6 +44,39 @@ Then, on any machine — no GPU required:
 toptop --demo
 ```
 
+**Model slow? Get a verdict you can paste into any thread:**
+
+```bash
+toptop --diagnose        # add --demo to see it without a GPU
+```
+
+```text
+toptop diagnose  ·  v1.1.0  ·  2026-09-21 09:01 UTC
+========================================================================
+HOST     gpubox
+VERDICT  MEMORY-BANDWIDTH BOUND
+         bandwidth 92% · compute 24%
+         Token generation is limited by memory bandwidth, not compute —
+         a faster GPU core would not help. Quantize further, or batch
+         more requests so each weight read serves more tokens.
+
+GPU      NVIDIA GeForce RTX 4090
+         compute 24% · mem b/w 92% · vram 23.0 GiB / 24.0 GiB (96%) ·
+         79°C · 379/450 W
+SERVER   vLLM:8000 meta-llama/Llama-3-8B
+         73.7 tok/s gen · 1200 tok/s prefill · kv 45% · queue 0 · ttft
+         p50 248ms p95 662ms · tpot p50 11ms p95 19ms
+SYSTEM   Ubuntu 24.04 · x86_64 · 16c · cpu 12% · ram 9.8 GiB / 64 GiB
+         (15%) · swap 0 B
+------------------------------------------------------------------------
+toptop v1.1.0 · https://github.com/ur-grue/toptop · `toptop --diagnose`
+```
+
+Samples for three seconds, names the bottleneck, shows the numbers it rests
+on, and exits. 72 columns, plain ASCII rules — it survives Reddit, GitHub
+issues and Slack unchanged. Ollama users get a **`MODEL PARTLY ON CPU`**
+verdict when a model did not fit.
+
 ---
 
 **The local‑inference view (press `a`) — the numbers `nvidia-smi` doesn't show you:**
@@ -436,6 +469,7 @@ OPTIONS:
         --no-save        Don't write the config back on exit
         --list-themes    Print available themes and exit
         --snapshot       Print a one‑shot text snapshot and exit (no TUI)
+        --diagnose       Print a paste-able why-is-it-slow verdict card and exit
         --export <FMT>   Print metrics and exit: 'json' (default) or 'prometheus'
         --serve-metrics [ADDR]  Run a Prometheus /metrics endpoint (default 127.0.0.1:9709)
         --alert-vram <PCT>   VRAM % that triggers the spill‑risk alert (default 90)
@@ -579,9 +613,10 @@ preempting:
 ```
 
 Each verdict states the evidence it rests on, so you can check it rather than
-believe it. The rules cover VRAM exhaustion, KV-cache thrashing, queue-bound
-under-feeding, the bandwidth-vs-compute split, throttling and the classic
-training data-loader bottleneck — and when none of them fit, it says so instead
+believe it. The rules cover VRAM exhaustion, a model Ollama could only partly
+fit on the GPU, KV-cache thrashing, queue-bound under-feeding, the
+bandwidth-vs-compute split, throttling and the classic training data-loader
+bottleneck — and when none of them fit, it says so instead
 of going quiet.
 
 ### KV-cache preemption — the metric nothing else surfaces

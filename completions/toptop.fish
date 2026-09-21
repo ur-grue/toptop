@@ -13,6 +13,7 @@ complete -c toptop -l config -d 'Use an explicit config file' -rF
 complete -c toptop -l no-save -d 'Do not write the config back on exit'
 complete -c toptop -l list-themes -d 'Print available themes and exit'
 complete -c toptop -l snapshot -d 'Print a one-shot text snapshot and exit'
+complete -c toptop -l diagnose -d 'Print a paste-able why-is-it-slow verdict card and exit'
 complete -c toptop -l export -d 'Print metrics and exit' -xa 'json csv prometheus'
 complete -c toptop -l serve-metrics -d 'Run a Prometheus metrics endpoint'
 complete -c toptop -l alert-vram -d 'VRAM % that triggers the spill-risk alert' -r

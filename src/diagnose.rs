@@ -46,6 +46,9 @@ mod t {
     pub const COMPUTE_STARVED: f32 = 40.0;
     /// CPU % at which a training process is pinning a core.
     pub const CPU_PINNED: f32 = 95.0;
+    /// Share of a model on the GPU below which Ollama is running it partly on
+    /// the CPU — every layer off the GPU costs 5–20× per token.
+    pub const OFFLOAD_FULL: f64 = 100.0;
 }
 
 /// Diagnose the current snapshot, most explanatory finding first.
@@ -90,6 +93,27 @@ pub fn diagnose(c: &Collector) -> Vec<Finding> {
             advice: "Layers spill to system RAM at 5–20× the latency. Use a \
                      smaller quantization, fewer GPU layers, or a shorter \
                      context before tuning anything else.",
+        });
+    }
+
+    // 1b. A model that did not fit: Ollama reports how much of it is on the
+    //     GPU, and anything under 100 % is the slowdown everyone hits once.
+    if let Some((tag, model, pct)) = c
+        .servers
+        .iter()
+        .filter_map(|s| s.gpu_offload_pct.map(|p| (s.label(), s.model.clone(), p)))
+        .filter(|(_, _, p)| *p < t::OFFLOAD_FULL)
+        .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+    {
+        let model = if model.is_empty() { tag.clone() } else { model };
+        out.push(Finding {
+            severity: Level::Crit,
+            headline: "MODEL PARTLY ON CPU",
+            evidence: format!("{tag} · {model} {pct:.0}% on GPU"),
+            advice: "The model did not fit, so the rest runs on the CPU at a \
+                     fraction of the speed. Use a smaller quantization, a \
+                     shorter context (num_ctx), or free VRAM held by another \
+                     model.",
         });
     }
 
@@ -237,6 +261,36 @@ mod tests {
 
     fn headlines(c: &Collector) -> Vec<&'static str> {
         diagnose(c).into_iter().map(|f| f.headline).collect()
+    }
+
+    #[test]
+    fn a_model_that_did_not_fit_is_called_out() {
+        let mut c = Collector::new(8);
+        c.gpus = vec![gpu(20.0, 30.0, 95, 100)];
+        c.servers = vec![ServerStats {
+            runtime: "Ollama",
+            port: 11434,
+            model: "llama3:70b".into(),
+            gpu_offload_pct: Some(58.0),
+            ..Default::default()
+        }];
+        let f = diagnose(&c);
+        assert_eq!(f[0].headline, "MODEL PARTLY ON CPU");
+        assert!(f[0].evidence.contains("llama3:70b 58% on GPU"));
+        assert!(f[0].advice.contains("quantization"));
+    }
+
+    #[test]
+    fn a_fully_resident_model_is_not_an_offload_finding() {
+        let mut c = Collector::new(8);
+        c.gpus = vec![gpu(70.0, 70.0, 50, 100)];
+        c.servers = vec![ServerStats {
+            runtime: "Ollama",
+            port: 11434,
+            gpu_offload_pct: Some(100.0),
+            ..Default::default()
+        }];
+        assert!(!headlines(&c).contains(&"MODEL PARTLY ON CPU"));
     }
 
     #[test]
