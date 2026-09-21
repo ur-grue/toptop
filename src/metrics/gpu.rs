@@ -436,7 +436,9 @@ mod apple {
                     if utf8.is_null() {
                         String::new()
                     } else {
-                        std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned()
+                        std::ffi::CStr::from_ptr(utf8)
+                            .to_string_lossy()
+                            .into_owned()
                     }
                 };
                 objc_release(device);
@@ -445,7 +447,11 @@ mod apple {
                 } else {
                     name
                 };
-                MacGpuDevice { name, unified, max_mem }
+                MacGpuDevice {
+                    name,
+                    unified,
+                    max_mem,
+                }
             }
         })
     }
@@ -477,8 +483,7 @@ mod apple {
             if perf.is_null() {
                 return None;
             }
-            let util = dict_i64(perf, "Device Utilization %")
-                .map(|u| u.clamp(0, 100) as f32);
+            let util = dict_i64(perf, "Device Utilization %").map(|u| u.clamp(0, 100) as f32);
             let sys_mem_used = dict_i64(perf, "In use system memory")
                 .map(|m| m.max(0) as u64)
                 .unwrap_or(0);
@@ -660,7 +665,11 @@ mod apple_tests {
         assert!(std::ptr::eq(a, b), "OnceLock value must be stable");
         assert!(!a.name.trim().is_empty(), "device must have a name");
         if a.max_mem > 0 {
-            assert!(a.max_mem >= 1024 * 1024 * 1024, "suspiciously small: {}", a.max_mem);
+            assert!(
+                a.max_mem >= 1024 * 1024 * 1024,
+                "suspiciously small: {}",
+                a.max_mem
+            );
         }
         // When Metal answered, it must agree with the build target on the
         // memory architecture: unified on Apple Silicon, discrete on Intel.
