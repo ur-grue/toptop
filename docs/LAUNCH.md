@@ -70,12 +70,35 @@ follow traffic, traffic follows a specific claim people can verify in 60s.
 **Title:**
 > I made an htop alternative that tells you *why* your local model is slow — and prints a verdict you can paste here (Ollama/vLLM/llama.cpp, NVIDIA + Apple Silicon)
 
-**Body:** lead with a real `toptop --diagnose` card (not the demo — a card
-from an actual Ollama box, `MODEL PARTLY ON CPU` if you can get one), then
-the animated AI-view demo, then the same pitch as HN but warmer. Ask the
+**Body:** lead with this real `toptop --diagnose` card (Intel iMac, Ollama
+running Mistral Small 24B entirely on the CPU — taken 2026-09-21, replace
+with a fresher one if you have it), then the animated AI-view demo, then the same pitch as HN but warmer. Ask the
 question that turns readers into users: "if your model is slow, run
 `toptop --diagnose` and paste it — I'll read every one." End with "it's
 free/GPL, single binary — what metric would you want next?"
+
+Real card to open the post with:
+
+```text
+toptop diagnose  ·  v1.1.0  ·  2026-09-21 10:21 UTC
+========================================================================
+HOST     imac
+VERDICT  MODEL RUNNING ON CPU
+         Ollama:11434 · mistral-small3.1:24b 0% on GPU
+         The runtime is not using the GPU at all — no supported backend
+         for this card, or it was started CPU-only. Check `ollama ps`
+         (PROCESSOR column) and the server log's GPU detection line
+         before tuning anything else.
+
+GPU      AMD Radeon Pro 5700 XT
+         compute 9% · vram 3.8 GiB / 16.0 GiB (24%) · 61°C · 18 W
+SERVER   Ollama:11434 mistral-small3.1:24b
+         0% on GPU
+SYSTEM   macOS 26.5.2 · x86_64 · 20c · cpu 63% · ram 82.8 GiB / 128 GiB
+         (65%) · swap 1.7 GiB
+------------------------------------------------------------------------
+toptop v1.1.0 · https://github.com/ur-grue/toptop · `toptop --diagnose`
+```
 
 **Apple Silicon post (separate, a few days later, r/LocalLLaMA + r/macapps):**
 > asitop is dead since 2024 — I built GPU util + unified-memory pressure +
