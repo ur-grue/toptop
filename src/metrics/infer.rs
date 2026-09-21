@@ -571,8 +571,12 @@ const LOCALHOST: &str = "127.0.0.1";
 fn http_get(host: &str, port: u16, path: &str, timeout: Duration) -> Option<String> {
     use std::net::ToSocketAddrs;
     // Resolution can block, so it happens on the scraper thread like the rest.
-    let addr = (host, port).to_socket_addrs().ok()?.next()?;
-    let mut stream = TcpStream::connect_timeout(&addr, timeout).ok()?;
+    // Try every address the name resolves to: on macOS "localhost" comes
+    // back as ::1 first, and Ollama listens on 127.0.0.1 only.
+    let mut stream = (host, port)
+        .to_socket_addrs()
+        .ok()?
+        .find_map(|addr| TcpStream::connect_timeout(&addr, timeout).ok())?;
     stream.set_read_timeout(Some(timeout)).ok()?;
     stream.set_write_timeout(Some(timeout)).ok()?;
     let req = format!(
@@ -609,12 +613,29 @@ pub fn no_servers_reason() -> &'static str {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        "Localhost server discovery is Linux-only (other platforms tracked in ur-grue/toptop#13)."
+        "No inference server on the usual localhost ports (Ollama 11434, LM Studio 1234, vLLM 8000, llama.cpp 8080); use --llm-server host:port for others."
     }
 }
 
-/// Discover serving runtimes that are listening, as `(port, pid)`.
+/// Ports the popular runtimes bind by default. Off Linux there is no `/proc`
+/// to map sockets to processes, so these are probed directly — which is how
+/// a Mac finds its own Ollama with no flags.
+pub const WELL_KNOWN_PORTS: [u16; 6] = [
+    11434, // Ollama
+    1234,  // LM Studio
+    8000,  // vLLM, SGLang (default 30000 too)
+    30000, // SGLang
+    8080,  // llama.cpp server, TGI
+    8001,  // TensorRT-LLM (triton metrics 8002)
+];
+
+/// Discover serving runtimes that are listening, as `(port, pid)`. Linux
+/// maps listening sockets to processes via `/proc`; other platforms probe the
+/// well-known ports with pid 0 (the scrape decides whether anything answers).
 fn discover_servers() -> Vec<(u16, u32)> {
+    if !cfg!(target_os = "linux") {
+        return WELL_KNOWN_PORTS.iter().map(|p| (*p, 0)).collect();
+    }
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for (port, pid) in netconn::listening_sockets() {
@@ -756,68 +777,195 @@ fn scrape_once(
     // Manual targets first: they were asked for explicitly, and they have no
     // PID to match, so they never collide with the discovery pass below.
     for (i, t) in targets.iter().enumerate() {
-        let Some(body) = http_get(&t.host, t.port, "/metrics", remote_timeout) else {
-            continue;
-        };
         // Manual targets have no local PID; the index keeps counter-rate keys
         // distinct between targets without pretending to be a process id.
         let key_pid = u32::MAX - i as u32;
-        if let Some(mut s) = stats_from_prometheus(&body, 0, t.port) {
+        if let Some(mut s) = probe(&t.host, t.port, 0, remote_timeout, prev, key_pid, now) {
             s.addr = Some(t.label());
-            apply_counter_rates(&mut s, &body, prev, key_pid, t.port, now);
             out.push(s);
         }
     }
     for (port, pid) in discover_servers() {
-        if out.iter().any(|s| s.pid == pid) {
-            continue; // one server per process
+        if out.iter().any(|s| already_covered(s, port, pid)) {
+            continue;
         }
-        // Prometheus endpoints (llama.cpp / vLLM / TGI).
-        if let Some(body) = http_get(LOCALHOST, port, "/metrics", timeout) {
-            if let Some(mut s) = stats_from_prometheus(&body, pid, port) {
-                apply_counter_rates(&mut s, &body, prev, pid, port, now);
-                out.push(s);
-                continue;
-            }
-        }
-        // Ollama JSON.
-        if let Some(body) = http_get(LOCALHOST, port, "/api/ps", timeout) {
-            if body.contains("\"models\"") {
-                let models = parse_ollama_ps(&body);
-                if let Some(m) = models.into_iter().max_by_key(|m| m.size) {
-                    let offload = (m.size > 0).then(|| m.size_vram as f64 / m.size as f64 * 100.0);
-                    out.push(ServerStats {
-                        runtime: "Ollama",
-                        pid,
-                        port,
-                        model: m.name,
-                        gpu_offload_pct: offload,
-                        ..Default::default()
-                    });
-                    continue;
-                }
-            }
-        }
-        // LM Studio JSON (no Prometheus endpoint; /api/v0/models lists
-        // models with a "state" field marking the loaded one).
-        if let Some(body) = http_get(LOCALHOST, port, "/api/v0/models", timeout) {
-            if body.contains("\"state\"") {
-                out.push(ServerStats {
-                    runtime: "LM Studio",
-                    pid,
-                    port,
-                    model: parse_lmstudio_loaded_model(&body).unwrap_or_default(),
-                    ..Default::default()
-                });
-            }
+        if let Some(s) = probe(LOCALHOST, port, pid, timeout, prev, pid, now) {
+            out.push(s);
         }
     }
     out
 }
 
+/// One row per server: a process already scraped (Linux, real pid), or a
+/// local port a manual `--llm-server` target already named.
+fn already_covered(existing: &ServerStats, port: u16, pid: u32) -> bool {
+    if pid != 0 && existing.pid == pid {
+        return true;
+    }
+    let same_port = existing.port == port;
+    let is_local = match &existing.addr {
+        None => true,
+        Some(addr) => {
+            let host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
+            matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+        }
+    };
+    same_port && is_local
+}
+
+/// Ask one host:port which runtime it is, in the order that costs least when
+/// wrong: Prometheus `/metrics` (llama.cpp / vLLM / TGI / TensorRT-LLM), then
+/// Ollama's `/api/ps`, then LM Studio's `/api/v0/models`. Shared by the
+/// localhost sweep and manual `--llm-server` targets, so a Mac pointing at its
+/// own Ollama gets the same answer a Linux box gets from discovery.
+fn probe(
+    host: &str,
+    port: u16,
+    pid: u32,
+    timeout: Duration,
+    prev: &mut HashMap<(u32, u16, &'static str), (f64, Instant)>,
+    key_pid: u32,
+    now: Instant,
+) -> Option<ServerStats> {
+    if let Some(body) = http_get(host, port, "/metrics", timeout) {
+        if let Some(mut s) = stats_from_prometheus(&body, pid, port) {
+            apply_counter_rates(&mut s, &body, prev, key_pid, port, now);
+            return Some(s);
+        }
+    }
+    if let Some(body) = http_get(host, port, "/api/ps", timeout) {
+        if let Some(s) = ollama_stats(&body, pid, port) {
+            return Some(s);
+        }
+    }
+    let body = http_get(host, port, "/api/v0/models", timeout)?;
+    lmstudio_stats(&body, pid, port)
+}
+
+/// Ollama `/api/ps` → the largest resident model and how much of it sits on
+/// the GPU. `None` when the body is not an Ollama response or nothing is
+/// loaded.
+pub fn ollama_stats(body: &str, pid: u32, port: u16) -> Option<ServerStats> {
+    if !body.contains("\"models\"") {
+        return None;
+    }
+    let m = parse_ollama_ps(body).into_iter().max_by_key(|m| m.size)?;
+    let offload = (m.size > 0).then(|| m.size_vram as f64 / m.size as f64 * 100.0);
+    Some(ServerStats {
+        runtime: "Ollama",
+        pid,
+        port,
+        model: m.name,
+        gpu_offload_pct: offload,
+        ..Default::default()
+    })
+}
+
+/// LM Studio `/api/v0/models` (no Prometheus endpoint; the list marks the
+/// loaded model with a `state` field).
+pub fn lmstudio_stats(body: &str, pid: u32, port: u16) -> Option<ServerStats> {
+    if !body.contains("\"state\"") {
+        return None;
+    }
+    Some(ServerStats {
+        runtime: "LM Studio",
+        pid,
+        port,
+        model: parse_lmstudio_loaded_model(body).unwrap_or_default(),
+        ..Default::default()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ollama_body_yields_offload_share() {
+        let body =
+            r#"{"models":[{"name":"llama3:70b","size":40000,"size_vram":25000,"details":{}}]}"#;
+        let s = ollama_stats(body, 7, 11434).expect("ollama");
+        assert_eq!(s.runtime, "Ollama");
+        assert_eq!(s.model, "llama3:70b");
+        assert_eq!(s.gpu_offload_pct, Some(62.5));
+        assert!(ollama_stats(r#"{"data":[]}"#, 7, 11434).is_none());
+    }
+
+    #[test]
+    fn manual_target_finds_an_ollama_server() {
+        // A one-shot HTTP server that answers like Ollama: 404 on /metrics
+        // and /api/v0/models, the /api/ps document otherwise. This is what a
+        // Mac pointing --llm-server at its own Ollama used to miss entirely.
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            for _ in 0..3 {
+                let Ok((mut sock, _)) = listener.accept() else {
+                    break;
+                };
+                let mut buf = [0u8; 1024];
+                let n = sock.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let (status, body) = if req.starts_with("GET /api/ps") {
+                    (
+                        "200 OK",
+                        r#"{"models":[{"name":"mistral-small3.1:24b","size":1000,"size_vram":0,"details":{}}]}"#,
+                    )
+                } else {
+                    ("404 Not Found", "")
+                };
+                let _ = write!(
+                    sock,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        let mut prev = HashMap::new();
+        // "localhost" on purpose: it resolves to ::1 first on macOS, and the
+        // listener above is IPv4-only — the scraper must try every address.
+        let targets = vec![Target {
+            host: "localhost".into(),
+            port,
+        }];
+        let out = scrape_once(&mut prev, &targets);
+        let s = out
+            .iter()
+            .find(|s| s.runtime == "Ollama")
+            .expect("manual Ollama target must be scraped");
+        assert_eq!(s.model, "mistral-small3.1:24b");
+        assert_eq!(s.gpu_offload_pct, Some(0.0));
+        assert_eq!(s.addr.as_deref(), Some(&*format!("localhost:{port}")));
+        drop(server);
+    }
+
+    #[test]
+    fn well_known_probe_does_not_duplicate_a_manual_local_target() {
+        let manual = ServerStats {
+            runtime: "Ollama",
+            port: 11434,
+            addr: Some("localhost:11434".into()),
+            ..Default::default()
+        };
+        assert!(already_covered(&manual, 11434, 0));
+        let remote = ServerStats {
+            addr: Some("gpu-box:11434".into()),
+            port: 11434,
+            ..Default::default()
+        };
+        assert!(
+            !already_covered(&remote, 11434, 0),
+            "a remote box is not this port"
+        );
+        let by_pid = ServerStats {
+            pid: 4242,
+            port: 8000,
+            ..Default::default()
+        };
+        assert!(already_covered(&by_pid, 9999, 4242), "one row per process");
+        assert!(!already_covered(&by_pid, 8080, 0));
+    }
 
     #[test]
     fn histogram_quantiles_interpolate_within_buckets() {
@@ -1042,12 +1190,12 @@ vllm:num_preemptions_total{model_name=\"Llama-3-8B\"} 137
     fn no_servers_reason_is_platform_honest() {
         let msg = no_servers_reason();
         assert!(!msg.is_empty());
-        // Off Linux, discovery doesn't run — the message must say so and point
-        // at the tracking issue rather than implying nothing is running.
+        // Off Linux only the well-known ports are probed — the message must
+        // say which, and name the flag for everything else.
         #[cfg(not(target_os = "linux"))]
         {
-            assert!(msg.contains("Linux-only"));
-            assert!(msg.contains("#13"));
+            assert!(msg.contains("11434"));
+            assert!(msg.contains("--llm-server"));
         }
     }
 

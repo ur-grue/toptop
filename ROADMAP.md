@@ -41,8 +41,8 @@ Make the AI view true everywhere local LLMs run, and deepen it.
    unified-memory headroom. (Tracked on [#4](../../issues/4).)
 2. **Per-process GPU memory.** Metal/IOKit doesn't expose per-PID VRAM like NVML;
    the "GPU processes by VRAM" table may be dropped or re-sourced on macOS.
-3. **macOS discovery parity.** `/proc` discovery is Linux-only; 1.1 is manual
-   `--llm-server` ([#13](../../issues/13)), native macOS discovery is later.
+3. **macOS discovery parity.** Shipped in 1.1.1: off Linux the well-known
+   ports are probed directly, plus manual `--llm-server` ([#13](../../issues/13)).
 
 ## Deferred — breadth ([milestone](../../milestone/2))
 

@@ -75,7 +75,8 @@ toptop v1.1.0 · https://github.com/ur-grue/toptop · `toptop --diagnose`
 Samples for three seconds, names the bottleneck, shows the numbers it rests
 on, and exits. 72 columns, plain ASCII rules — it survives Reddit, GitHub
 issues and Slack unchanged. Ollama users get a **`MODEL PARTLY ON CPU`**
-verdict when a model did not fit.
+verdict when a model did not fit, and **`MODEL RUNNING ON CPU`** when the
+runtime has no GPU backend at all.
 
 ---
 
@@ -438,7 +439,8 @@ Metal's working‑set ceiling (the spill warning fires before the model pages), 
 the discrete AMD cards in Intel Macs report VRAM in use, temperature and power —
 all read from IOKit and Metal directly, no root, no extra crates. The
 `/proc`‑based connections inspector degrades to an empty panel there; inference
-servers are found via `--llm-server host:port`. On light terminal backgrounds, use
+servers are found on their default ports (Ollama, LM Studio, vLLM, llama.cpp) or
+via `--llm-server host:port`. On light terminal backgrounds, use
 `--theme paper`.
 
 **Windows** is **best-effort**: it builds and its tests run in CI on
@@ -613,8 +615,8 @@ preempting:
 ```
 
 Each verdict states the evidence it rests on, so you can check it rather than
-believe it. The rules cover VRAM exhaustion, a model Ollama could only partly
-fit on the GPU, KV-cache thrashing, queue-bound under-feeding, the
+believe it. The rules cover VRAM exhaustion, a model Ollama runs partly or
+entirely on the CPU, KV-cache thrashing, queue-bound under-feeding, the
 bandwidth-vs-compute split, throttling and the classic training data-loader
 bottleneck — and when none of them fit, it says so instead
 of going quiet.
@@ -657,8 +659,11 @@ only visible over time.
 
 ### Remote and non-Linux inference servers
 
-Auto-discovery walks `/proc` to map listening sockets to runtime processes, so
-it is localhost- and Linux-only. `--llm-server` bypasses it entirely:
+On Linux, auto-discovery walks `/proc` to map listening sockets to runtime
+processes. On macOS and Windows it probes the ports the runtimes bind by
+default (Ollama 11434, LM Studio 1234, vLLM/SGLang 8000 and 30000, llama.cpp
+8080, TensorRT-LLM 8001) — a Mac finds its own Ollama with no flags. For
+anything else, `--llm-server` names the target:
 
 ```bash
 toptop --llm-server gpu-box:8000 --llm-server 10.0.0.5:11434
@@ -667,8 +672,9 @@ toptop --ai --llm-server '[::1]:8000'      # bracket IPv6 literals
 
 Repeatable, and settable as `llm_servers = gpu-box:8000, 10.0.0.5:11434` in the
 config. Manual targets are scraped with the same parsers as discovered ones and
-labelled by their address (they have no local PID). This is also how macOS and
-Windows users get inference metrics today.
+labelled by their address (they have no local PID). A hostname is tried on
+every address it resolves to, so `localhost` reaches an IPv4-only server even
+where it resolves to `::1` first.
 ## ⏺️ Record & replay
 
 "The GPU throttled ten minutes ago — what happened?" toptop keeps 256 in-memory
